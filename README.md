@@ -14,7 +14,7 @@ Cody continuously updates its knowledge base every time you save a file, ensurin
 
 1. Set the environment variable `OPENAI_API_KEY` in a `.env` file with your OpenAI API key.
 2. Modify the `ignore_list` in the `if __name__ == "__main__":` section of the script to specify directories and files you wish to exclude from monitoring.
-3. Run the script using Python: python cody.py
+3. Run the script using Python: python codyv4.py or codyv5.py
 
    4. Once the script is running, type 'Q' and press enter to switch to question mode. Cody is ready to answer your queries!
 
@@ -31,12 +31,17 @@ Cody continuously updates its knowledge base every time you save a file, ensurin
 - `langchain`: A language processing library used for text splitting and embeddings.
 - `watchdog`: Monitor filesystem events in real-time.
 - `openai`: Generate smart responses using OpenAI's language model.
+- `speech_recognition`: Convert speech to text for voice interaction.
+- `gtts`: Google Text-to-Speech library for generating audio from text.
+- `pygame`: Library to play audio files.
 
 ## 💡 Usage
 
-To query your codebase, type 'Q' and press enter. Cody will prompt you to input your question. Once you've entered your query, Cody will generate a response based on its knowledge base.
+- For version V4 (Text Interaction), type 'Q' and press enter. Cody will prompt you to input your question. Once you've entered your query, Cody will generate a response based on its knowledge base. Use Cody to debug code, troubleshoot errors, ask for help in adding new features, understand how functions interact across files, and more.
 
-To stop the script, type 'exit' and press enter.
+- For version V5 (Voice Interaction), simply speak to Cody, and it will respond accordingly. Cody is here to assist you with various programming tasks, making it a valuable tool in your coding journey.
+
+To stop the script, type 'exit' or speak the word 'exit' and press enter. Cody will gracefully terminate the program.
 
 ## ⚠️ Notes & Tips
 
