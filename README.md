@@ -12,17 +12,17 @@ Cody continuously updates its knowledge base every time you save a file, ensurin
 
 ## 🚀 Getting Started
 
-1. Set the environment variable `OPENAI_API_KEY` in a `.env` file with your OpenAI API key.
-2. Modify the `ignore_list` in the `if __name__ == "__main__":` section of the script to specify directories and files you wish to exclude from monitoring.
-3. Run the script using Python: python codyv4.py or codyv5.py
-
-   4. Once the script is running, type 'Q' and press enter to switch to question mode. Cody is ready to answer your queries!
+1. Clone the repo
+2. (Optionally) Setup virtual environment by running `pip install -m venv .venv` and then `pip install -r requirements.txt` in terminal from the root of your directory
+3. Rename the `.local.env` file to `.env`` and replace `YOUR_API_KEY_HERE` with your OpenAI API Key.
+4. Modify the `IGNORE_THESE` global var at the top of the script to specify directories and files you wish to exclude from monitoring. (You should comment out any large files like a virtual environment, cache, js libraries you have downloaded, etc...)
+5. Run the script using Python: python cody.py and follow terminal for setup. It will prompt you for if you want to use text chat (terminal) or conversational (speech i/o). It will also warn you if you remove .env from the ignore list.
 
 ## 🎯 Features
 
 - **File Monitoring**: Real-time monitoring of all files in your project's directory and subdirectories. 👀
 - **Embedding-based Knowledge Base**: Create a knowledge base using OpenAI Embeddings. Cody collects the contents of all text and JSON files and adds them to this knowledge base. 📚
-- **Interactive Querying**: Listen to user inputs. Ask questions, and Cody will generate a response using the knowledge base. 🧠
+- **Interactive Q&A**: Listen to user inputs. Ask questions, and Cody will generate a response using the knowledge base. 🧠
 - **Customizable**: Easily specify files or directories to ignore during monitoring.
 
 ## 🛠 Dependencies
@@ -37,11 +37,7 @@ Cody continuously updates its knowledge base every time you save a file, ensurin
 
 ## 💡 Usage
 
-- For version V4 (Text Interaction), type 'Q' and press enter. Cody will prompt you to input your question. Once you've entered your query, Cody will generate a response based on its knowledge base. Use Cody to debug code, troubleshoot errors, ask for help in adding new features, understand how functions interact across files, and more.
-
-- For version V5 (Voice Interaction), simply speak to Cody, and it will respond accordingly. Cody is here to assist you with various programming tasks, making it a valuable tool in your coding journey.
-
-To stop the script, type 'exit' or speak the word 'exit' and press enter. Cody will gracefully terminate the program.
+- To stop the script, type 'exit' or speak the word 'exit' and press enter. Cody will gracefully terminate the program.
 
 ## ⚠️ Notes & Tips
 
@@ -49,5 +45,8 @@ To stop the script, type 'exit' or speak the word 'exit' and press enter. Cody w
 - Additionally, be sure to monitor your OpenAI api usage. A helpful tip is to set a monthly spend limit inside of your OpenAI account to prevent anything crazy from happening. As an additional helper, it prints the number of tokens used in each call you make.
 - "LIVE" coding questions. To use to it's full potential. I recommend opening a seperate terminal or even command prompt cd'ing into your project directory, and then launching python cody.py. Then place it split screen with your code in a small viewing window on the far left or right. This way, you can use a seperate terminal for actually running your code without worrying about Cody or having to run him (er... it) each time! This will still continue to update with each file save you do on any file so it always is using the latest data.
 
+## Contributing
+
+Contributions are welcome. Please submit a pull request or open an issue for any bugs or feature requests.
 
 Happy Coding with Cody! 💡🚀🎉
