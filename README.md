@@ -45,5 +45,8 @@ Cody continuously updates its knowledge base every time you save a file, ensurin
 - Additionally, be sure to monitor your OpenAI api usage. A helpful tip is to set a monthly spend limit inside of your OpenAI account to prevent anything crazy from happening. As an additional helper, it prints the number of tokens used in each call you make.
 - "LIVE" coding questions. To use to it's full potential. I recommend opening a seperate terminal or even command prompt cd'ing into your project directory, and then launching python cody.py. Then place it split screen with your code in a small viewing window on the far left or right. This way, you can use a seperate terminal for actually running your code without worrying about Cody or having to run him (er... it) each time! This will still continue to update with each file save you do on any file so it always is using the latest data.
 
+## Contributing
+
+Contributions are welcome. Please submit a pull request or open an issue for any bugs or feature requests.
 
 Happy Coding with Cody! 💡🚀🎉
