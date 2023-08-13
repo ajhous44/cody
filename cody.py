@@ -20,7 +20,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ### USER OPTIONS ###
 ### MAX TOKENS PER CALL: MAX TOKENS TO USE FOR CALL
 MAX_TOKENS_PER_CALL = 2500 # MAX TOKENS TO USE FOR CALL
-IGNORE_THESE = ['.ensv', 'static', 'dashboard/static', 'audio', 'license.md', '.github', '__pycache__']
+IGNORE_THESE = ['.venv', '.env', 'static', 'dashboard/static', 'audio', 'license.md', '.github', '__pycache__']
 r = sr.Recognizer()
 
 class FileChangeHandler(FileSystemEventHandler):
