@@ -13,7 +13,7 @@ import os
 import speech_recognition as sr
 from gtts import gTTS
 import pygame
-
+from litellm import completion 
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -129,7 +129,7 @@ def create_audio(text):
 def generate_response(prompt, speak_response=True):
 	openai.api_key = OPENAI_API_KEY
 	try:
-		completion = openai.ChatCompletion.create(
+		completion = completion(
 		model="gpt-3.5-turbo", 
 		messages=[{"role": "user", "content": prompt}],
 		max_tokens=MAX_TOKENS_PER_CALL,
