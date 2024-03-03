@@ -28,7 +28,9 @@ Cody continuously updates its knowledge base every time you save a file, ensurin
 ## 🛠 Dependencies
 
 - `dotenv`: Load variables from a `.env` file into the environment.
-- `langchain`: A language processing library used for text splitting and embeddings.
+- `langchain-community`: A language processing library used for embeddings and vector storage. Previously `langchain`.
+- `langchain_openai`: Provides the `OpenAIEmbeddings` functionality, integrating OpenAI models directly with langchain's architecture.
+- `litellm`: Call all LLM APIs using the OpenAI format (https://github.com/BerriAI/litellm)
 - `watchdog`: Monitor filesystem events in real-time.
 - `openai`: Generate smart responses using OpenAI's language model.
 - `speech_recognition`: Convert speech to text for voice interaction.
@@ -38,6 +40,45 @@ Cody continuously updates its knowledge base every time you save a file, ensurin
 ## 💡 Usage
 
 - To stop the script, type 'exit' or speak the word 'exit' and press enter. Cody will gracefully terminate the program.
+
+### Configuring the Ignore List
+
+Cody allows you to specify which files and directories should be ignored during file monitoring. This is particularly useful for excluding files that change frequently, are not relevant to your queries, or could contain sensitive information.
+
+To customize your `ignore_list`, add patterns matching the files or directories you wish to exclude. Cody supports simple wildcard patterns for flexibility. Here are some examples to guide you:
+
+#### Examples
+
+- **Ignoring Specific Files**: If you want to ignore all `.env` files, you can add `*.env` to the ignore list.
+    ```python
+    IGNORE_THESE = ['*.env']
+    ```
+
+- **Ignoring Directories**: To ignore an entire directory, such as `node_modules` or a virtual environment directory like `.venv`, simply add the directory name.
+    ```python
+    IGNORE_THESE = ['node_modules', '.venv']
+    ```
+
+- **Ignoring File Extensions**: To ignore all files with a specific extension, such as `.log` or `.tmp`, use the wildcard pattern `*`.
+    ```python
+    IGNORE_THESE = ['*.log', '*.tmp']
+    ```
+
+- **Complex Patterns**: You can combine directory names and wildcards to ignore specific types of files within certain directories. For example, to ignore all `.md` files in the `docs` directory:
+    ```python
+    IGNORE_THESE = ['docs/*.md']
+    ```
+
+#### Tips for Configuring Your Ignore List
+
+- **Review Regularly**: As your project evolves, so too may the files and directories you need to ignore. Regularly reviewing and updating your `ignore_list` can help ensure Cody's performance remains optimal.
+
+- **Use Wildcards Wisely**: While wildcards offer powerful flexibility, they can also lead to unintentionally ignoring important files. Be specific in your patterns to avoid such issues.
+
+- **Test Changes**: After updating your `ignore_list`, perform a few tests to ensure that the changes behave as expected, especially if using complex patterns.
+
+By carefully configuring your `ignore_list`, you can tailor Cody to better suit your project's needs, enhancing both its efficiency and relevance to your coding tasks.
+
 
 ## ⚠️ Notes & Tips
 

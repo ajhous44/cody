@@ -1,7 +1,7 @@
 from dotenv import load_dotenv
 from langchain.text_splitter import CharacterTextSplitter
-from langchain.embeddings.openai import OpenAIEmbeddings
-from langchain.vectorstores import FAISS
+from langchain_openai import OpenAIEmbeddings
+from langchain_community.vectorstores import FAISS
 from watchdog.observers import Observer
 from watchdog.events import FileSystemEventHandler
 import tempfile
@@ -13,7 +13,10 @@ import os
 import speech_recognition as sr
 from gtts import gTTS
 import pygame
-from litellm import completion 
+import fnmatch
+
+
+# Load environment variable(s)
 load_dotenv()
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 
@@ -21,6 +24,7 @@ OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 ### MAX TOKENS PER CALL: MAX TOKENS TO USE FOR CALL
 MAX_TOKENS_PER_CALL = 2500 # MAX TOKENS TO USE FOR CALL
 IGNORE_THESE = ['.venv', '.env', 'static', 'dashboard/static', 'audio', 'license.md', '.github', '__pycache__']
+
 r = sr.Recognizer()
 
 class FileChangeHandler(FileSystemEventHandler):
@@ -33,19 +37,17 @@ class FileChangeHandler(FileSystemEventHandler):
 		self.knowledge_base = {}
 		self.embeddings = OpenAIEmbeddings(openai_api_key=OPENAI_API_KEY)
 
-	def should_ignore(self, filename):
-		current_time = time.time()
-		if filename in self._busy_files:
-			if current_time - self._busy_files[filename] < self.cooldown:
+	def should_ignore(self, path):
+		for pattern in self.ignore_list:
+			if fnmatch.fnmatch(path, pattern) or any(fnmatch.fnmatch(part, pattern) for part in path.split(os.sep)):
 				return True
-		self._busy_files[filename] = current_time
 		return False
 
 	def on_modified(self, event):
-		if "response.mp3" not in event.src_path:
-			if not self.should_ignore(event.src_path):
-				print(f'\n\U0001F4BE The file {event.src_path} has changed!')
-				self.update_file_content()
+		if self.should_ignore(event.src_path):
+			return
+		print(f'\n🔄 The file {event.src_path} has changed!')
+		self.update_file_content()
 
 	def update_file_content(self):
 		print("\n\U0001F4C1 Collecting files...")
@@ -129,7 +131,7 @@ def create_audio(text):
 def generate_response(prompt, speak_response=True):
 	openai.api_key = OPENAI_API_KEY
 	try:
-		completion = completion(
+		completion = openai.chat.completions.create(
 		model="gpt-3.5-turbo", 
 		messages=[{"role": "user", "content": prompt}],
 		max_tokens=MAX_TOKENS_PER_CALL,
