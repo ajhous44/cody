@@ -1,8 +1,9 @@
 
 # 🤖 Cody - Your AI Coding Assistant 
+[![Star History Chart](https://api.star-history.com/svg?repos=ajhous44/cody&type=Date)](https://star-history.com/#ajhous44/cody&Date)
 
 Welcome to Cody! An AI assistant designed to let you interactively query your codebase using natural language. By utilizing vector embeddings, chunking, and OpenAI's language models, Cody can help you navigate through your code in an efficient and intuitive manner. 💻
-
+https://www.star-history.com/#ajhous44/cody&Date
 ![image](https://github.com/ajhous44/cody/assets/42582780/f2a62a20-663c-4ec1-b000-67257331fb12)
 ## LINK
 https://www.loom.com/share/eba1d0dcee20430fbd412580d1c0ea0e?sid=4998cf6f-45b4-480d-b742-6f22f3a49dc3
