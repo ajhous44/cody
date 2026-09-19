@@ -1,0 +1,34 @@
+# OS and editor files
+.DS_Store
+Thumbs.db
+*.swp
+*.swo
+*~
+.idea/
+.vscode/
+
+# Local credentials and configuration
+.env
+.env.*
+!.env.example
+!.env.*.example
+
+# Dependencies and generated output
+node_modules/
+.venv/
+__pycache__/
+*.py[cod]
+/cody
+/dist/
+/build/
+/target/
+coverage/
+.cache/
+*.log
+
+# Local scratch files
+/tmp/
+/temp/
+
+# Private planning documents (not part of the public repository)
+/docs/
