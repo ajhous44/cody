@@ -62,8 +62,14 @@ Rules:
 }
 
 // Optional returns rules for opt-in tools, so disabled ones cost no tokens.
-func Optional(web, browser bool) string {
+func Optional(web, browser, plan bool) string {
 	var b strings.Builder
+	if plan {
+		b.WriteString(`- Before changing anything (write, edit, bash, browser, web), call plan with 1-7
+  short steps and wait for approval. Questions and read-only exploration need no
+  plan. Call plan again before changing course.
+`)
+	}
 	if web {
 		b.WriteString(`- Use web_search (when present) for public research and web_fetch to read sources;
   cite the returned source URLs. Never send secrets or private code in searches.

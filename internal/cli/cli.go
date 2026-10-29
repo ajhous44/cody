@@ -148,6 +148,9 @@ func applyFlags(cfg *config.Config, opts options) {
 	if opts.debug != nil {
 		cfg.Debug = *opts.debug
 	}
+	if opts.plan {
+		cfg.PlanGate = true
+	}
 }
 
 func (a *app) repl() int {
@@ -238,6 +241,24 @@ func (a *app) command(line string) bool {
 		} else {
 			a.u.Printf("approval: %s\n", a.eng.Approval())
 		}
+	case "/plan":
+		if len(fields) > 1 {
+			if fields[1] != "on" && fields[1] != "off" {
+				a.u.Errorf("cody: /plan takes on or off\n")
+				return false
+			}
+			cfg := a.eng.Config()
+			cfg.PlanGate = fields[1] == "on"
+			if err := a.eng.Configure(cfg); err != nil {
+				a.u.Errorf("cody: %v\n", err)
+				return false
+			}
+		}
+		state := "off"
+		if a.eng.Config().PlanGate {
+			state = "on (changes wait for an approved plan)"
+		}
+		a.u.Printf("plan gate: %s\n", state)
 	case "/index":
 		rebuild := len(fields) > 1 && fields[1] == "--rebuild"
 		stats, err := runIndex(context.Background(), a.cfg, a.root, rebuild)
@@ -271,6 +292,7 @@ func (a *app) help() {
 		"/provider [name]   show or switch provider",
 		"/approval [mode]   ask, auto, or yolo",
 		"/think [on|off]    show or hide model reasoning",
+		"/plan [on|off]     require an approved plan before changes",
 		"/index [--rebuild] build or refresh the semantic index",
 		"/clear             start a new session",
 		"/sessions          list recent sessions",
@@ -784,6 +806,7 @@ flags:
       --approval MODE      ask (default), auto, yolo
       --yolo               shorthand for --approval yolo
       --show-thinking      print model reasoning traces (hidden by default)
+      --plan               require an approved plan before any change
       --resume ID          resume a session by id (or "last")
       --allow-home         allow running with $HOME as the workspace
       --debug[=BOOL]       show raw provider errors and every retry
@@ -807,6 +830,6 @@ bench flags:
 config: ~/.cody/config.json
 env:    CODY_PROVIDER, CODY_MODEL, CODY_APPROVAL, CODY_API_KEY,
         CODY_NO_AUTOSTART, CODY_EMBED_PROVIDER, OLLAMA_HOST, OPENROUTER_API_KEY,
-        CODY_DEBUG
+        CODY_DEBUG, CODY_PLAN
 `)
 }

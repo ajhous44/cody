@@ -397,3 +397,58 @@ func TestConsumeSplitsUnindexedParallelCalls(t *testing.T) {
 		}
 	}
 }
+
+// With the plan gate on, nothing changes until a plan is approved: a mutating
+// call is refused, an invalid plan never reaches the user, an approved plan
+// unlocks changes, and a rejected one tells the model to ask instead.
+func TestPlanGate(t *testing.T) {
+	call := func(id, name, args string) []provider.Delta {
+		return []provider.Delta{{ToolCalls: []provider.ToolCallDelta{{Index: 0, ID: id, Name: name, Args: args}}}}
+	}
+	run := func(approvePlan bool, script ...[]provider.Delta) ([]provider.Message, int, []string) {
+		ran := 0
+		var asked []string
+		a := New(Options{
+			Provider: &fakeProvider{script: script}, Model: "test", System: "system", RequirePlan: true,
+			Tools: tool.NewRegistry(&echoTool{mutating: true, run: func(string) (string, error) { ran++; return "ran", nil }}, tool.NewPlan()),
+			Approver: ApproverFunc(func(_ context.Context, tl tool.Tool, _ string) (bool, error) {
+				asked = append(asked, tl.Name())
+				return tl.Name() != "plan" || approvePlan, nil
+			}),
+		})
+		added, err := a.Prompt(context.Background(), "change it", nil)
+		if err != nil {
+			t.Fatalf("Prompt: %v", err)
+		}
+		return added, ran, asked
+	}
+
+	added, ran, asked := run(true,
+		call("c1", "echo", "{}"),
+		call("c2", "plan", `{"steps":[]}`),
+		call("c3", "plan", `{"steps":["change the file"]}`),
+		call("c4", "echo", `{"x":1}`),
+		[]provider.Delta{{Content: "done"}},
+	)
+	results := []string{}
+	for _, m := range added {
+		if m.Role == "tool" {
+			results = append(results, m.Content)
+		}
+	}
+	if len(results) != 4 || !strings.Contains(results[0], "call plan") || !strings.Contains(results[1], "1-7 steps") ||
+		!strings.HasPrefix(results[2], "plan approved") || results[3] != "ran" {
+		t.Fatalf("gate results = %q", results)
+	}
+	if ran != 1 || strings.Join(asked, ",") != "plan,echo" {
+		t.Fatalf("ran %d times, asked %v: change ran before approval or invalid plan was shown", ran, asked)
+	}
+
+	added, ran, _ = run(false,
+		call("c1", "plan", `{"steps":["delete everything"]}`),
+		[]provider.Delta{{Content: "what should change?"}},
+	)
+	if ran != 0 || !strings.Contains(added[2].Content, "rejected this plan") {
+		t.Fatalf("rejected plan: ran %d, result %q", ran, added[2].Content)
+	}
+}

@@ -167,6 +167,7 @@ func (s *Server) settingsPayload() map[string]any {
 	out["webEnabled"] = cfg.WebEnabled
 	out["browserEnabled"] = cfg.BrowserEnabled
 	out["debug"] = cfg.Debug
+	out["planGate"] = cfg.PlanGate
 	out["braveSearchKeySet"] = cfg.SearchKey() != ""
 	out["braveSearchKeyEnv"] = os.Getenv("BRAVE_SEARCH_API_KEY") != ""
 	return out
@@ -189,6 +190,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		BrowserEnabled *bool   `json:"browserEnabled"`
 		BraveSearchKey *string `json:"braveSearchKey"`
 		Debug          *bool   `json:"debug"`
+		PlanGate       *bool   `json:"planGate"`
 	}
 	if !s.decode(w, r, &body) {
 		return
@@ -261,6 +263,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.Debug != nil {
 			c.Debug = *body.Debug
+		}
+		if body.PlanGate != nil {
+			c.PlanGate = *body.PlanGate
 		}
 	}
 	saved, err := config.LoadFile()

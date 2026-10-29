@@ -251,3 +251,16 @@ func TestTruncateKeepsRunesWhole(t *testing.T) {
 		t.Fatalf("truncate split a rune: %q", got)
 	}
 }
+
+// A plan is read before approving, so each step gets its own line.
+func TestApprovePlanListsSteps(t *testing.T) {
+	var out, errOut bytes.Buffer
+	u := New(strings.NewReader("y\n"), &out, &errOut)
+	ok, err := u.Approve(context.Background(), tool.NewPlan(), `{"steps":["read the config","fix the bug"]}`)
+	if err != nil || !ok {
+		t.Fatalf("approve: %v %v", ok, err)
+	}
+	if got := out.String(); !strings.Contains(got, "\n    1. read the config\n    2. fix the bug") {
+		t.Fatalf("plan steps not listed:\n%s", got)
+	}
+}

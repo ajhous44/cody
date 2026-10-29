@@ -36,6 +36,7 @@ type Config struct {
 	BrowserEnabled bool                `json:"browser_enabled,omitempty"`
 	BraveSearchKey string              `json:"brave_search_key,omitempty"`
 	Debug          bool                `json:"debug,omitempty"`
+	PlanGate       bool                `json:"plan_gate,omitempty"`
 }
 
 func Dir() string {
@@ -100,6 +101,9 @@ func (c *Config) applyEnv() {
 	}
 	if v, err := strconv.ParseBool(os.Getenv("CODY_DEBUG")); err == nil {
 		c.Debug = v
+	}
+	if v, err := strconv.ParseBool(os.Getenv("CODY_PLAN")); err == nil {
+		c.PlanGate = v
 	}
 	if v := os.Getenv("CODY_PROVIDER"); v != "" {
 		c.Provider = v

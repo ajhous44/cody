@@ -193,3 +193,35 @@ test('web and browser opt-ins stay independent and search keys never return to t
   await page.locator('#set-search-clear').click();
   await expect(page.locator('#set-web-hint')).toContainText('Add a search key');
 });
+
+test('plan gate shows the plan before anything changes and blocks unplanned changes', async ({ page }) => {
+  await page.goto('/?token=browser-test');
+  await page.locator('#open-settings').click();
+  const gate = page.locator('#set-plan');
+  await Promise.all([
+    page.waitForResponse(r => r.url().endsWith('/api/settings') && r.request().method() === 'POST'),
+    gate.check(),
+  ]);
+  await page.locator('#close-settings').click();
+
+  await page.locator('#input').fill('plan sample');
+  await page.locator('#send').click();
+  const card = page.locator('#approval-dock .approval');
+  await expect(card).toContainText('plan');
+  await expect(card.locator('pre')).toBeVisible();
+  await expect(card.locator('pre')).toContainText('1. inspect the sample');
+  await expect(card.locator('pre')).toContainText('2. update the sample');
+  await card.locator('button.allow').click();
+  await expect(page.locator('#transcript .assistant').last()).toHaveText('small answer');
+
+  // A new request with a change but no plan is refused without asking.
+  const answers = await page.locator('#transcript .assistant').count();
+  await page.locator('#input').fill('write sample');
+  await page.locator('#send').click();
+  await expect(page.locator('#transcript .assistant')).toHaveCount(answers + 1);
+  await expect(page.locator('#approval-dock .approval')).toHaveCount(0);
+  await expect(page.locator('#statustext')).toHaveText('ready');
+
+  await page.locator('#open-settings').click();
+  await gate.uncheck();
+});

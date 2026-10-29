@@ -463,6 +463,12 @@
         </section>
 
         <section class="settings-section">
+          <h3>plan gate</h3>
+          <label class="check"><input type="checkbox" id="set-plan">Require an approved plan before changes</label>
+          <p class="hint">The model proposes a short plan and you approve it once per request, even in auto or yolo. Same as <code>cody --plan</code>.</p>
+        </section>
+
+        <section class="settings-section">
           <h3>debug</h3>
           <label class="check"><input type="checkbox" id="set-debug">Show raw provider errors</label>
           <p class="hint">Adds the provider's raw status and message to errors and lists every retry. Same as <code>cody --debug</code>.</p>
@@ -757,6 +763,13 @@
     detail.hidden = true;
     detail.textContent = ev.args || ev.summary;
     try { detail.textContent = JSON.stringify(JSON.parse(ev.args), null, 2); } catch (_) {}
+    if (ev.tool === "plan") {
+      // A plan is read before approving, so its steps start expanded.
+      summary.textContent = "approve before anything changes";
+      detail.textContent = ev.summary || ev.args;
+      detail.hidden = false;
+      toggle.setAttribute("aria-expanded", "true");
+    }
     toggle.setAttribute("aria-controls", detail.id);
     toggle.addEventListener("click", () => {
       detail.hidden = !detail.hidden;
@@ -1657,6 +1670,7 @@
     $("set-web-enabled").checked = !!s.webEnabled;
     $("set-browser-enabled").checked = !!s.browserEnabled;
     $("set-debug").checked = !!s.debug;
+    $("set-plan").checked = !!s.planGate;
     $("set-web-hint").textContent = s.braveSearchKeySet
       ? (s.braveSearchKeyEnv ? "Search key detected in your environment." : "Search key configured.")
       : "Page reading needs no key. Add a search key to enable web search.";
@@ -2188,6 +2202,7 @@
   $("set-web-enabled").addEventListener("change", e => saveWebSettings({ webEnabled: e.target.checked }));
   $("set-browser-enabled").addEventListener("change", e => saveWebSettings({ browserEnabled: e.target.checked }));
   $("set-debug").addEventListener("change", e => saveWebSettings({ debug: e.target.checked }));
+  $("set-plan").addEventListener("change", e => saveWebSettings({ planGate: e.target.checked }));
   $("set-search-save").addEventListener("click", () => {
     const key = $("set-search-key").value.trim();
     if (key) saveWebSettings({ braveSearchKey: key });

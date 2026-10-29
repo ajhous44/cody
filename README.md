@@ -216,7 +216,7 @@ The script signs both executables and the app with the hardened runtime, submits
 
 The native Mac app is optional. The CLI and browser GUI work without it. Signed apps can be downloaded from GitHub Releases; Mac App Store distribution is not required. The wrapper currently has no automatic updater: install a newer release to update it.
 
-In the interactive loop: `/help`, `/model`, `/provider`, `/approval`, `/think`, `/index`, `/clear`, `/sessions`, `/exit`. Ctrl+C cancels the running turn; press it again to quit.
+In the interactive loop: `/help`, `/model`, `/provider`, `/approval`, `/think`, `/plan`, `/index`, `/clear`, `/sessions`, `/exit`. Ctrl+C cancels the running turn; press it again to quit.
 
 ### Approvals
 
@@ -227,6 +227,10 @@ In the interactive loop: `/help`, `/model`, `/provider`, `/approval`, `/think`, 
 | `yolo` | automatic | automatic |
 
 Set with `--approval`, `--yolo`, or `CODY_APPROVAL`. At a prompt, `a` approves everything for the rest of the session. File tools and previews reject paths and symlinks that escape the workspace, and `write`/`edit` refuse to modify `.git` metadata (hooks and config can run commands). Shell commands run with your user permissions and are not sandboxed; approve them accordingly. Cancelling a shell tool terminates its process tree, and background children are cleaned up when the tool exits.
+
+### Plan gate
+
+Turn it on with `--plan`, `/plan on`, `CODY_PLAN=true`, or Settings → plan gate. The model then has to call a `plan` tool with 1-7 short steps, and you approve it, before its first change in each request; until then every change (file writes, shell, browser, web) is refused. Questions and read-only exploration need no plan. A plan always asks, even in `auto` and `yolo`, which makes those modes a good fit: approve the direction once, then let it run. Rejecting a plan tells the model to ask what to change. With the gate off, the `plan` tool and its rule are not sent to the model at all.
 
 ### Semantic index
 
@@ -257,6 +261,7 @@ cody index
   "embed_provider": "ollama",
   "web_enabled": false,
   "browser_enabled": false,
+  "plan_gate": false,
   "brave_search_key": "",
   "providers": {
     "ollama": { "base_url": "http://localhost:11434/v1" },
@@ -265,7 +270,7 @@ cody index
 }
 ```
 
-Environment overrides: `CODY_PROVIDER`, `CODY_MODEL`, `CODY_APPROVAL`, `CODY_API_KEY`, `CODY_NO_AUTOSTART`, `CODY_EMBED_PROVIDER`, `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, `BRAVE_SEARCH_API_KEY`. `CODY_WEB`, `CODY_BROWSER`, and `CODY_DEBUG` accept `true`/`false` or `1`/`0`. Debug mode (also `--debug[=BOOL]` or the GUI settings toggle) appends the provider's raw status and message to errors and lists every retry. Overrides apply only to the running process; saving GUI settings writes just the values you changed, so environment values and env-provided keys never reach `config.json`. `CODY_CONFIG_DIR` overrides the default `~/.cody` directory for settings, sessions, and indexes.
+Environment overrides: `CODY_PROVIDER`, `CODY_MODEL`, `CODY_APPROVAL`, `CODY_API_KEY`, `CODY_NO_AUTOSTART`, `CODY_EMBED_PROVIDER`, `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, `CODY_PLAN`, `BRAVE_SEARCH_API_KEY`. `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, and `CODY_PLAN` accept `true`/`false` or `1`/`0`. Debug mode (also `--debug[=BOOL]` or the GUI settings toggle) appends the provider's raw status and message to errors and lists every retry. Overrides apply only to the running process; saving GUI settings writes just the values you changed, so environment values and env-provided keys never reach `config.json`. `CODY_CONFIG_DIR` overrides the default `~/.cody` directory for settings, sessions, and indexes.
 
 Any OpenAI-compatible endpoint works as an extra provider: add a `providers.<name>.base_url` entry and pass `-p <name>`.
 
@@ -366,7 +371,7 @@ Clients never own the model loop. The CLI and the web GUI both drive `internal/e
 ### Phase 3 - Later, only if it earns its place
 
 - [x] Thin web GUI over the same engine (`cody serve`).
-- [ ] Plan gate: propose a short plan before acting on multi-step tasks.
+- [x] Plan gate: propose a short plan before acting on multi-step tasks.
 - [ ] Small TUI: scrollback, session picker, live token/timing budget.
 - [ ] Anthropic provider adapter.
 - [ ] OS-level sandbox profile and a documented container profile.

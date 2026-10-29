@@ -126,3 +126,32 @@ func TestSearchToolAndOptionalRulesFollowAvailability(t *testing.T) {
 		t.Fatalf("search missing after indexing: %s", tools)
 	}
 }
+
+// The plan tool exists only with the gate on, and it always reaches the user,
+// even in yolo, while yolo still skips approval for everything else.
+func TestPlanGateToolAndApproval(t *testing.T) {
+	e := &Engine{cfg: config.Default(), root: t.TempDir()}
+	if _, ok := e.tools().Get("plan"); ok {
+		t.Fatal("plan offered with the gate off")
+	}
+	e.cfg.PlanGate = true
+	if _, ok := e.tools().Get("plan"); !ok {
+		t.Fatal("plan missing with the gate on")
+	}
+	var asked []string
+	e.cfg.Approval = "yolo"
+	e.approver = agent.ApproverFunc(func(_ context.Context, tl tool.Tool, _ string) (bool, error) {
+		asked = append(asked, tl.Name())
+		return false, nil
+	})
+	approve := e.approverFor()
+	if ok, _ := approve.Approve(context.Background(), tool.NewPlan(), `{"steps":["x"]}`); ok {
+		t.Fatal("plan approved without asking in yolo")
+	}
+	if ok, _ := approve.Approve(context.Background(), tool.NewBash(e.root), `{"command":"true"}`); !ok {
+		t.Fatal("yolo stopped auto-approving bash")
+	}
+	if strings.Join(asked, ",") != "plan" {
+		t.Fatalf("asked %v, want only plan", asked)
+	}
+}

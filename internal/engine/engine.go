@@ -422,8 +422,8 @@ func (e *Engine) installProvider(cfg *config.Config, p provider.Provider, model 
 	e.cfg, e.p, e.model = cfg, p, model
 	e.indexed = indexExists(e.root)
 	e.ag = agent.New(agent.Options{
-		Provider: p, Model: model, System: prompt.Base(e.root) + prompt.Optional(cfg.WebEnabled, cfg.BrowserEnabled), Root: e.root, Tools: e.tools(),
-		Approver: e.approverFor(), ContextTokens: defaultBudget(p.Name()), Debug: cfg.Debug,
+		Provider: p, Model: model, System: prompt.Base(e.root) + prompt.Optional(cfg.WebEnabled, cfg.BrowserEnabled, cfg.PlanGate), Root: e.root, Tools: e.tools(),
+		Approver: e.approverFor(), ContextTokens: defaultBudget(p.Name()), Debug: cfg.Debug, RequirePlan: cfg.PlanGate,
 		Record: func(m provider.Message) error { return e.recordBatch([]session.Record{recordFromMessage(m)}) },
 	})
 	e.ag.SetHistory(history)
@@ -436,6 +436,14 @@ func (e *Engine) approverFor() agent.Approver {
 		e.mu.Lock()
 		mode, approver := e.cfg.Approval, e.approver
 		e.mu.Unlock()
+		// A plan is the user's checkpoint, so it is asked in every mode;
+		// headless callers with no approver have no one to ask.
+		if t.Name() == "plan" {
+			if approver == nil {
+				return true, nil
+			}
+			return approver.Approve(ctx, t, args)
+		}
 		switch mode {
 		case "yolo":
 			return true, nil
@@ -462,6 +470,9 @@ func (e *Engine) tools() *tool.Registry {
 		tool.NewBash(e.root),
 		tool.NewGrep(e.root),
 		tool.NewGlob(e.root),
+	}
+	if e.cfg.PlanGate {
+		tools = append(tools, tool.NewPlan())
 	}
 	if e.indexed {
 		tools = append(tools, tool.NewSearch(e.root, index.Path(e.root), EmbedID(e.cfg), Embedder(e.cfg)))

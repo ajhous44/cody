@@ -123,6 +123,9 @@ type Options struct {
 	ContextTokens   int
 	Record          func(provider.Message) error // Persist before executing the next action.
 	Debug           bool                         // Show raw provider errors and every retry.
+	// RequirePlan blocks mutating tools until the plan tool is approved
+	// within the current user request (the opt-in plan gate).
+	RequirePlan bool
 }
 
 type Agent struct {
@@ -244,6 +247,7 @@ func (a *Agent) Prompt(ctx context.Context, input string, h Handler) ([]provider
 	failedCall := ""
 	// A reread permits one retry, but cannot keep an unchanged edit loop alive.
 	failedEdits := map[string]int{}
+	planApproved := false
 	for turn := 0; turn < a.opts.MaxTurns; turn++ {
 		// Instructions from tool results become actionable only on the next model request.
 		for key, text := range a.pendingInstructions {
@@ -329,8 +333,20 @@ func (a *Agent) Prompt(ctx context.Context, input string, h Handler) ([]provider
 			if loopErr != nil {
 				// Finish journaling the batch without executing or approving more calls.
 				result = "error: not executed: " + loopErr.Error()
+			} else if a.opts.RequirePlan && !planApproved && call.Function.Name != "plan" && a.mutating(call.Function.Name) {
+				// The error prefix lets the repeated-call guard stop a model that keeps
+				// retrying instead of planning.
+				result = "error: not executed: call plan with a short numbered plan first; nothing may change until the user approves it"
+				failedCall = key
 			} else {
 				result = a.runTool(ctx, call, h)
+				if call.Function.Name == "plan" {
+					if strings.HasPrefix(result, "user denied") {
+						result = "user rejected this plan; ask what to change and do not change anything yet"
+					} else if !strings.HasPrefix(result, "error:") {
+						planApproved = true
+					}
+				}
 				failedCall = ""
 				if strings.HasPrefix(result, "error:") || (call.Function.Name == "bash" && strings.HasPrefix(result, "exit ") && !strings.HasPrefix(result, "exit 0 ")) {
 					failedCall = key
@@ -452,6 +468,11 @@ func consume(stream provider.Stream, h Handler) (*provider.Message, *provider.Us
 	return msg, usage, nil
 }
 
+func (a *Agent) mutating(name string) bool {
+	t, ok := a.opts.Tools.Get(name)
+	return ok && t.Mutating()
+}
+
 func (a *Agent) runTool(ctx context.Context, call provider.ToolCall, h Handler) string {
 	t, ok := a.opts.Tools.Get(call.Function.Name)
 	if !ok {
@@ -489,6 +510,12 @@ func (a *Agent) runTool(ctx context.Context, call provider.ToolCall, h Handler) 
 			if instructions != "" && t.Mutating() {
 				return instructions + "\nAction not executed. Follow these instructions and call the tool again."
 			}
+		}
+	}
+	// Tools that can check their arguments do so before asking for approval.
+	if v, ok := t.(interface{ Validate(json.RawMessage) error }); ok {
+		if err := v.Validate(json.RawMessage(args)); err != nil {
+			return "error: " + err.Error()
 		}
 	}
 	summary := strings.TrimSpace(t.Summarize(json.RawMessage(args)))

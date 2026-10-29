@@ -129,6 +129,9 @@ func (u *UI) Event(e agent.Event) {
 	switch e.Kind {
 	case agent.KindToolStart:
 		u.breakLine()
+		if e.Tool == "plan" {
+			return // the approval prompt already showed the steps
+		}
 		u.Printf("%s %s  %s\n", u.paint(cyan, "run"), u.paint(bold, e.Tool), u.describe(e.Tool, e.Args, e.Summary))
 	case agent.KindToolEnd:
 		u.breakLine()
@@ -337,6 +340,8 @@ func (u *UI) breakLine() {
 // plain text.
 func (u *UI) describe(tool, args, summary string) string {
 	switch tool {
+	case "plan":
+		return "\n" + indent(summary, "    ")
 	case "bash":
 		return u.paint(dim, "$") + " " + truncate(normalizeSpace(summary), 160)
 	case "edit":

@@ -84,6 +84,9 @@ func mockModel(w http.ResponseWriter, r *http.Request) {
 	} else if last.Role == "user" && last.Content == "write sample" {
 		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"write%d\",\"type\":\"function\",\"function\":{\"name\":\"write\",\"arguments\":\"{\\\"path\\\":\\\"created.txt\\\",\\\"content\\\":\\\"approved write\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", len(req.Messages))
 		return
+	} else if last.Role == "user" && last.Content == "plan sample" {
+		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"plan%d\",\"type\":\"function\",\"function\":{\"name\":\"plan\",\"arguments\":\"{\\\"steps\\\":[\\\"inspect the sample\\\",\\\"update the sample\\\"]}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", len(req.Messages))
+		return
 	} else if last.Role == "user" && last.Content == "fail command" {
 		fmt.Fprintf(w, "data: {\"choices\":[{\"delta\":{\"tool_calls\":[{\"index\":0,\"id\":\"bash%d\",\"type\":\"function\",\"function\":{\"name\":\"bash\",\"arguments\":\"{\\\"command\\\":\\\"exit 7\\\"}\"}}]},\"finish_reason\":\"tool_calls\"}]}\n\ndata: [DONE]\n\n", len(req.Messages))
 		return

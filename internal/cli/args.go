@@ -21,6 +21,7 @@ type options struct {
 	open         bool
 	watchStdin   bool
 	showThinking bool
+	plan         bool
 	rebuild      bool
 	runs         int
 	task         string
@@ -69,6 +70,8 @@ func parseArgs(args []string) (options, error) {
 			o.allowHome = true
 		case a == "--show-thinking":
 			o.showThinking = true
+		case a == "--plan":
+			o.plan = true
 		case a == "--rebuild":
 			o.rebuild = true
 		case a == "--debug" || strings.HasPrefix(a, "--debug="):
