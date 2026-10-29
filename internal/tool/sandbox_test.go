@@ -17,6 +17,10 @@ func runSandboxed(t *testing.T, root, mode, command string) (string, error) {
 	args, _ := json.Marshal(map[string]string{"command": command})
 	out, err := NewBash(root).WithSandbox(Sandbox{Mode: mode}).Run(context.Background(), args)
 	if strings.Contains(out, "Landlock unavailable") || strings.Contains(out, "needs Landlock network") {
+		// CI's Linux kernel has Landlock, so there the check must really run.
+		if os.Getenv("CI") != "" {
+			t.Fatal("Landlock missing on CI: " + out)
+		}
 		t.Skip("kernel lacks the Landlock support this check needs: " + out)
 	}
 	return out, err
