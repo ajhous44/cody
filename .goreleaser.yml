@@ -38,6 +38,13 @@ archives:
 checksum:
   name_template: checksums.txt
 
+# The one-line installers ship with each release, so
+# releases/latest/download/install.sh always matches the latest archives.
+release:
+  extra_files:
+    - glob: ./install.sh
+    - glob: ./install.ps1
+
 changelog:
   sort: asc
   filters:
@@ -63,3 +70,14 @@ brews:
       bin.install "cody"
     test: |
       system "#{bin}/cody", "version"
+
+scoops:
+  - repository:
+      owner: ajhous44
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    homepage: https://github.com/ajhous44/cody
+    description: "A small coding agent for the terminal"
+    license: MIT
+    # Like the tap: without a token the release still publishes.
+    skip_upload: '{{ if index .Env "SCOOP_BUCKET_TOKEN" }}false{{ else }}true{{ end }}'

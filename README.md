@@ -29,12 +29,30 @@ make check            # gofmt, vet, tests
 ./cody version
 ```
 
-After v3.0.0 is published, install with Go or download the archive for your OS and architecture from [GitHub Releases](https://github.com/ajhous44/cody/releases). Homebrew also requires the tap to be published:
+After v3.0.0 is published, the one-line installers download the latest release for your OS and CPU, verify it against the release's `checksums.txt`, and install the `cody` CLI (which includes the browser GUI). Neither needs admin rights.
+
+macOS and Linux (installs to `~/.local/bin`):
+
+```sh
+curl -fsSL https://github.com/ajhous44/cody/releases/latest/download/install.sh | sh
+```
+
+Windows PowerShell (installs to `%LOCALAPPDATA%\Programs\cody` and adds it to your user `Path`):
+
+```powershell
+irm https://github.com/ajhous44/cody/releases/latest/download/install.ps1 | iex
+```
+
+Set `CODY_VERSION` (for example `v3.0.0`) to pin a release or `CODY_INSTALL_DIR` to choose the folder. Rerunning an installer upgrades in place. Package managers and manual downloads also work:
 
 ```sh
 go install github.com/ajhous44/cody/v3@v3.0.0
-brew install ajhous44/tap/cody   # once the tap is available
+brew install ajhous44/tap/cody                                    # once the tap is published
+scoop bucket add ajhous44 https://github.com/ajhous44/scoop-bucket # Windows, once the bucket is published
+scoop install cody
 ```
+
+Archives for every OS and architecture are on [GitHub Releases](https://github.com/ajhous44/cody/releases).
 
 ### Optional PATH setup
 
@@ -359,7 +377,7 @@ Deliberately out of scope: multi-agent swarms, always-on MCP bundles, whole-tree
 
 ## Releasing
 
-Releases are cut by pushing a version tag. GitHub Actions runs Go/race and browser regressions on Linux, Windows, Apple Silicon, and Intel Macs, then publishes CLI archives for all three OSes (arm64/amd64) and checksums. Each CLI includes the browser GUI. Windows archives are ZIP files. The Homebrew formula is updated when configured.
+Releases are cut by pushing a version tag. GitHub Actions runs Go/race and browser regressions on Linux, Windows, Apple Silicon, and Intel Macs, then publishes CLI archives for all three OSes (arm64/amd64), checksums, and the `install.sh`/`install.ps1` installers. Each CLI includes the browser GUI. Windows archives are ZIP files. The Homebrew formula and Scoop manifest are updated when configured. CI also runs both installers end to end against a local release mirror on every OS, including a tampered archive that must be refused.
 
 To also publish the native Mac app, set the Actions repository variable `RELEASE_MACOS_APP=true` and configure these Actions secrets: `APPLE_DEVELOPER_ID_P12` (base64 exported certificate plus private key), `APPLE_DEVELOPER_ID_PASSWORD`, `APPLE_SIGN_IDENTITY`, `APPLE_ID`, `APPLE_TEAM_ID`, and `APPLE_APP_PASSWORD` (Apple app-specific password). After the CLI release succeeds, a separate job builds, signs, and notarizes the universal app before attaching it to the release. A signing failure prevents the app upload; the CLI release remains available. Credentials are imported into a temporary CI keychain and removed afterward. Never commit them.
 
@@ -373,7 +391,7 @@ git push origin v3.0.0
 make snapshot
 ```
 
-The Homebrew update needs an `ajhous44/homebrew-tap` repository and a `HOMEBREW_TAP_TOKEN` Actions secret with write access to it (a fine-grained PAT). Without the secret, the formula step is skipped and the GitHub release still publishes — `go install` users are unaffected either way. A reference formula lives in `packaging/homebrew/cody.rb` for manual tap setup.
+The Homebrew update needs an `ajhous44/homebrew-tap` repository and a `HOMEBREW_TAP_TOKEN` Actions secret with write access to it (a fine-grained PAT). Without the secret, the formula step is skipped and the GitHub release still publishes — `go install` users are unaffected either way. A reference formula lives in `packaging/homebrew/cody.rb` for manual tap setup. Scoop works the same way: an `ajhous44/scoop-bucket` repository and a `SCOOP_BUCKET_TOKEN` secret with write access to it; without the secret, that step is skipped too.
 
 ## Contributing
 
