@@ -51,7 +51,8 @@ type Engine struct {
 	runMu       sync.Mutex // serializes turns, configuration, and session switches
 	deferModel  bool
 	budgetReady bool
-	indexed     bool // search is registered only when an index exists
+	indexed     bool           // search is registered only when an index exists
+	skills      []prompt.Skill // skill index in the prompt; bodies load on demand
 	browser     *tool.Browser
 }
 
@@ -104,7 +105,8 @@ func (e *Engine) Send(ctx context.Context, text string, h agent.Handler) error {
 		}
 		e.installProvider(cfg, p, model)
 	}
-	if indexExists(e.root) != e.indexed { // `cody index` ran (or the index was deleted)
+	// `cody index` ran (or the index was deleted), or a skill was added or edited.
+	if indexExists(e.root) != e.indexed || skillsKey(discoverSkills(e.root)) != skillsKey(e.skills) {
 		e.installProvider(cfg, e.p, e.model)
 	}
 	e.ag.SetCacheKey(fmt.Sprintf("%x", sha256.Sum256([]byte(e.root+"\x00"+e.SessionID()))))
@@ -421,8 +423,10 @@ func (e *Engine) installProvider(cfg *config.Config, p provider.Provider, model 
 	}
 	e.cfg, e.p, e.model = cfg, p, model
 	e.indexed = indexExists(e.root)
+	e.skills = discoverSkills(e.root)
+	system := prompt.Base(e.root) + prompt.Optional(cfg.WebEnabled, cfg.BrowserEnabled, cfg.PlanGate) + prompt.SkillsIndex(e.skills)
 	e.ag = agent.New(agent.Options{
-		Provider: p, Model: model, System: prompt.Base(e.root) + prompt.Optional(cfg.WebEnabled, cfg.BrowserEnabled, cfg.PlanGate), Root: e.root, Tools: e.tools(),
+		Provider: p, Model: model, System: system, Root: e.root, Tools: e.tools(),
 		Approver: e.approverFor(), ContextTokens: defaultBudget(p.Name()), Debug: cfg.Debug, RequirePlan: cfg.PlanGate,
 		Record: func(m provider.Message) error { return e.recordBatch([]session.Record{recordFromMessage(m)}) },
 	})
@@ -473,6 +477,9 @@ func (e *Engine) tools() *tool.Registry {
 	}
 	if e.cfg.PlanGate {
 		tools = append(tools, tool.NewPlan())
+	}
+	if len(e.skills) > 0 {
+		tools = append(tools, tool.NewSkill(e.skills))
 	}
 	if e.indexed {
 		tools = append(tools, tool.NewSearch(e.root, index.Path(e.root), EmbedID(e.cfg), Embedder(e.cfg)))
@@ -582,6 +589,19 @@ func EmbedID(cfg *config.Config) string {
 		return "openrouter:" + model
 	}
 	return model
+}
+
+func discoverSkills(root string) []prompt.Skill {
+	return prompt.DiscoverSkills(prompt.SkillDirs(root, config.Dir())...)
+}
+
+// skillsKey changes when a skill is added, removed, renamed, or edited.
+func skillsKey(skills []prompt.Skill) string {
+	var b strings.Builder
+	for _, s := range skills {
+		fmt.Fprintf(&b, "%s\x00%s\x00%d\n", s.Name, s.Dir, s.Mod)
+	}
+	return b.String()
 }
 
 func indexExists(root string) bool {

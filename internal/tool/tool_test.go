@@ -9,6 +9,8 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+
+	"github.com/ajhous44/cody/v3/internal/prompt"
 )
 
 func writeFixture(t *testing.T, dir, name, content string) {
@@ -189,5 +191,36 @@ func TestRegistrySpecsCached(t *testing.T) {
 	}
 	if first[0].Function.Name != "read" || first[1].Function.Name != "bash" {
 		t.Fatalf("spec order or names wrong: %+v", first)
+	}
+}
+
+func TestSkillToolLoadsLazilyAndStaysInItsFolder(t *testing.T) {
+	dir, outside := t.TempDir(), t.TempDir()
+	writeFixture(t, outside, "secret.txt", "private")
+	skillDir := filepath.Join(dir, "lint")
+	if err := os.MkdirAll(filepath.Join(skillDir, "scripts"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	writeFixture(t, skillDir, "SKILL.md", "---\nname: lint\ndescription: run the linter\n---\nRun scripts/lint.sh then fix findings.")
+	writeFixture(t, filepath.Join(skillDir, "scripts"), "lint.sh", "echo lint")
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(skillDir, "leak")); err != nil {
+		t.Fatal(err)
+	}
+	sk := NewSkill([]prompt.Skill{{Name: "lint", Description: "run the linter", Dir: skillDir}})
+	got, err := sk.Run(context.Background(), []byte(`{"name":"lint"}`))
+	if err != nil || strings.Contains(got, "description:") || !strings.HasPrefix(got, "Run scripts/lint.sh") || !strings.Contains(got, "scripts/lint.sh") {
+		t.Fatalf("load: %q %v", got, err)
+	}
+	if got, err := sk.Run(context.Background(), []byte(`{"name":"lint","file":"scripts/lint.sh"}`)); err != nil || got != "echo lint" {
+		t.Fatalf("file: %q %v", got, err)
+	}
+	for _, file := range []string{"../../etc/passwd", "leak", filepath.Join(outside, "secret.txt")} {
+		args, _ := json.Marshal(map[string]string{"name": "lint", "file": file})
+		if got, err := sk.Run(context.Background(), args); err == nil {
+			t.Errorf("read %q outside the skill folder: %q", file, got)
+		}
+	}
+	if _, err := sk.Run(context.Background(), []byte(`{"name":"missing"}`)); err == nil || !strings.Contains(err.Error(), "available: lint") {
+		t.Fatalf("unknown skill: %v", err)
 	}
 }

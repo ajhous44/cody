@@ -276,6 +276,20 @@ Any OpenAI-compatible endpoint works as an extra provider: add a `providers.<nam
 
 Project instructions can live in `AGENTS.md` or the existing `CODY.md` at the workspace root (8 KiB per file). Both are loaded; `AGENTS.md` takes precedence where they conflict. Root instructions refresh each user turn. For `read`, `write`, and `edit`, Cody also discovers nested `AGENTS.md` files between the root and the target file. Deeper instructions apply to their subtree. A mutation with newly discovered or changed instructions returns those instructions before the model can retry the action. Shell commands still rely on the model reading applicable instructions before changing files. Instruction discovery stays inside the workspace.
 
+### Skills
+
+A skill is a folder with a `SKILL.md`: reusable instructions (plus any scripts or reference files) for a task like "release notes" or "deploy to staging". Project skills live in `.cody/skills/<name>/SKILL.md` and override user skills of the same name in `~/.cody/skills/<name>/SKILL.md`. The format matches existing Agent Skills folders:
+
+```markdown
+---
+name: release-notes
+description: Draft release notes from the git log since the last tag.
+---
+Run `git log --oneline $(git describe --tags --abbrev=0)..HEAD`, group the commits by area, ...
+```
+
+Skills load lazily. The system prompt carries only one `name: description` line per skill (up to 50), and the model calls the `skill` tool to read a skill's full instructions, or one of its other files, when a task matches. Loading is read-only and never leaves the skill's folder; running a skill's scripts still goes through the normal shell approval. With no skills installed, nothing is added to the prompt. Adding or editing a skill takes effect on the next request. Project skills are repository content, so treat them with the same trust as `AGENTS.md`.
+
 Long sessions summarize older context while retaining the current request and most recent tool exchange verbatim. The full transcript stays saved; summaries are held in memory and rebuilt if needed after resume. Compaction uses additional model requests only when necessary. An active request or tool result that cannot fit produces an explicit error. Cody reserves output and tool-schema space, uses OpenRouter model limits and Ollama's loaded context window when available, and falls back to conservative estimates otherwise.
 
 Prompt caching uses a stable, opaque session ID for OpenRouter routing and OpenAI cache affinity. Claude models on OpenRouter also receive the supported automatic ephemeral cache hint; other models use provider-managed caching. Cached input and cache-write token counts appear in the CLI/GUI and session usage records when the provider reports them. Benchmark JSON includes these counts too. Cache hits depend on the provider, model, prompt size, and reuse; cache writes may have a cost. See [OpenRouter's caching documentation](https://openrouter.ai/docs/guides/best-practices/prompt-caching). Cody does not cache generated answers or file contents.
@@ -375,7 +389,7 @@ Clients never own the model loop. The CLI and the web GUI both drive `internal/e
 - [ ] Small TUI: scrollback, session picker, live token/timing budget.
 - [ ] Anthropic provider adapter.
 - [ ] OS-level sandbox profile and a documented container profile.
-- [ ] Optional skills directory with lazy loading (no always-on MCP).
+- [x] Optional skills directory with lazy loading (no always-on MCP).
 - [ ] `cody bench --suite` for regression tracking and a PERFORMANCE.md with measured budgets.
 - [ ] Session fork/replay-from-message.
 

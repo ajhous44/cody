@@ -155,3 +155,47 @@ func TestPlanGateToolAndApproval(t *testing.T) {
 		t.Fatalf("asked %v, want only plan", asked)
 	}
 }
+
+// Skills cost nothing until one exists; a skill added mid-session shows up
+// (index line plus skill tool) on the next request.
+func TestSkillsAppearWhenAdded(t *testing.T) {
+	requests := make(chan map[string]any, 4)
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/models" {
+			fmt.Fprint(w, `{"data":[{"id":"test","context_length":16384}]}`)
+			return
+		}
+		var req map[string]any
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		requests <- req
+		fmt.Fprint(w, "data: {\"choices\":[{\"delta\":{\"content\":\"ok\"},\"finish_reason\":\"stop\"}]}\n\ndata: [DONE]\n\n")
+	}))
+	defer srv.Close()
+	root := t.TempDir()
+	cfg := config.Default()
+	cfg.Provider, cfg.Model = "openrouter", "test"
+	cfg.Providers["openrouter"] = config.Provider{BaseURL: srv.URL}
+	eng := newEngine(t, cfg, root, nil)
+	send := func() (string, string) {
+		t.Helper()
+		if err := eng.Send(context.Background(), "hi", nil); err != nil {
+			t.Fatal(err)
+		}
+		req := <-requests
+		b, _ := json.Marshal(req["tools"])
+		return string(b), req["messages"].([]any)[0].(map[string]any)["content"].(string)
+	}
+	if tools, system := send(); strings.Contains(tools, `"skill"`) || strings.Contains(system, "Skills:") {
+		t.Fatal("skills advertised with none installed")
+	}
+	dir := filepath.Join(root, ".cody", "skills", "deploy")
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("---\nname: deploy\ndescription: ship to staging\n---\nsteps"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	if tools, system := send(); !strings.Contains(tools, `"skill"`) || !strings.Contains(system, "deploy: ship to staging") || strings.Contains(system, "steps") {
+		t.Fatalf("skill not offered lazily:\ntools %s\nsystem %s", tools, system)
+	}
+}
