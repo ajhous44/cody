@@ -185,3 +185,16 @@ func TestWatchStdinStopsServerWhenParentCloses(t *testing.T) {
 		t.Fatal("server kept running after its parent closed stdin")
 	}
 }
+
+func TestParseForkArgs(t *testing.T) {
+	o, err := parseArgs([]string{"fork", "20260101-000000-abc", "--at", "3", "--rerun"})
+	if err != nil || o.command != "fork" || o.forkFrom != "20260101-000000-abc" || o.forkAt != 3 || !o.rerun || len(o.prompt) != 0 {
+		t.Fatalf("fork args: %+v %v", o, err)
+	}
+	if o, _ := parseArgs([]string{"fork"}); o.forkFrom != "last" || o.forkAt != 0 {
+		t.Fatalf("default fork: %+v", o)
+	}
+	if _, err := parseArgs([]string{"fork", "--at", "0"}); err == nil {
+		t.Fatal("accepted --at 0")
+	}
+}

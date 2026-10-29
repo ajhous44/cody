@@ -1181,3 +1181,34 @@ func TestGitLabel(t *testing.T) {
 		}
 	}
 }
+
+func TestSessionForkEndpointAndTurnNumbers(t *testing.T) {
+	eng := &stubEngine{root: t.TempDir()}
+	ts, _ := newTestServer(t, eng)
+	src := session.New(eng.root, "")
+	if err := src.AppendBatch([]session.Record{
+		{Type: "message", Role: "user", Text: "one"},
+		{Type: "message", Role: "assistant", Text: "a"},
+		{Type: "message", Role: "user", Text: "two"},
+	}); err != nil {
+		t.Fatal(err)
+	}
+	src.Close()
+	resp := post(t, ts.URL+"/api/session/fork", "test-token", map[string]any{"path": eng.root, "id": src.ID(), "turn": 2})
+	var out map[string]string
+	_ = json.NewDecoder(resp.Body).Decode(&out)
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusOK || out["prefill"] != "two" || out["session"] == "" || eng.resumed != out["session"] {
+		t.Fatalf("fork: %d %+v resumed %q", resp.StatusCode, out, eng.resumed)
+	}
+
+	// Turn numbers count the whole thread, even past the 80-message window.
+	var msgs []provider.Message
+	for i := 0; i < 50; i++ {
+		msgs = append(msgs, provider.Message{Role: "user", Content: "q"}, provider.Message{Role: "assistant", Content: "a"})
+	}
+	hist := historyOf(msgs)
+	if len(hist) != maxHistoryMessages || hist[0].Turn != 11 || hist[len(hist)-2].Turn != 50 || hist[1].Turn != 0 {
+		t.Fatalf("turns: first %d, last user %d", hist[0].Turn, hist[len(hist)-2].Turn)
+	}
+}

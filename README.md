@@ -118,7 +118,9 @@ cody "prompt"            one-shot prompt
 cody run "prompt"        one-shot prompt
 cody resume [id|last]    resume a session
 cody sessions            list sessions for this workspace
-cody replay [id|last]    print a session transcript
+cody replay [id|last]    print a session transcript (user turns numbered)
+cody fork [id|last] [--at N] [--rerun]
+                         continue in a copy of a session before turn N
 cody models [filter]     list models for the current provider
 cody index [--rebuild]   build or refresh the local semantic index
 cody serve [flags]       web GUI over the same engine (default 127.0.0.1:8765)
@@ -216,7 +218,7 @@ The script signs both executables and the app with the hardened runtime, submits
 
 The native Mac app is optional. The CLI and browser GUI work without it. Signed apps can be downloaded from GitHub Releases; Mac App Store distribution is not required. The wrapper currently has no automatic updater: install a newer release to update it.
 
-In the interactive loop: `/help`, `/model`, `/provider`, `/approval`, `/think`, `/plan`, `/index`, `/clear`, `/sessions`, `/exit`. Ctrl+C cancels the running turn; press it again to quit.
+In the interactive loop: `/help`, `/model`, `/provider`, `/approval`, `/think`, `/plan`, `/index`, `/clear`, `/sessions`, `/fork`, `/exit`. Ctrl+C cancels the running turn; press it again to quit.
 
 ### Approvals
 
@@ -301,6 +303,8 @@ Cody stops consecutive identical failed tool calls before executing them again, 
 ### Sessions
 
 Every message is appended and synced to `~/.cody/sessions/<project>-<hash>/<id>.jsonl` before the next action. A crash can still occur between a tool's side effect and its result being recorded; resume marks such calls as interrupted with an unknown outcome instead of silently rerunning them. A damaged trailing JSON record does not swallow later messages. Cody does not add configured credentials or environment variables to the journal, but prompts and tool output can contain secrets you supply. Files use owner-only permissions on Unix; on Windows they inherit your profile directory's ACL.
+
+**Fork and replay.** A fork is a new session holding everything from before one of your messages, so the conversation can go a different way from there; the original is never changed. `cody replay` numbers your messages, `cody fork last --at 3` opens a copy that stops before message 3 (and prints that message so you can edit it), and `--rerun` sends message 3 again in the copy. Without `--at`, the whole session is copied. In the REPL, `/fork 3` does the same. In the GUI, hover one of your earlier messages and click **fork**: a new thread opens and the message is back in the composer to edit or resend. A thread's right-click menu can also fork the whole thread. Forks are titled "… (fork)" and record the session they came from.
 
 ## Benchmarks
 
@@ -391,7 +395,7 @@ Clients never own the model loop. The CLI and the web GUI both drive `internal/e
 - [ ] OS-level sandbox profile and a documented container profile.
 - [x] Optional skills directory with lazy loading (no always-on MCP).
 - [ ] `cody bench --suite` for regression tracking and a PERFORMANCE.md with measured budgets.
-- [ ] Session fork/replay-from-message.
+- [x] Session fork/replay-from-message.
 
 Deliberately out of scope: multi-agent swarms, always-on MCP bundles, whole-tree indexing, internal snapshot VCS, telemetry.
 

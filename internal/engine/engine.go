@@ -378,6 +378,19 @@ func (e *Engine) Resume(id string) error {
 	return nil
 }
 
+// Fork switches to a new session copied from id (the current session when
+// empty) before user turn `turn`; see session.Fork. It returns that turn's text.
+func (e *Engine) Fork(id string, turn int) (string, error) {
+	if id == "" {
+		id = e.SessionID()
+	}
+	forked, prefill, err := session.Fork(e.root, id, turn)
+	if err != nil {
+		return "", err
+	}
+	return prefill, e.Resume(forked)
+}
+
 func (e *Engine) Close() error {
 	e.runMu.Lock()
 	defer e.runMu.Unlock()

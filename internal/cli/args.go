@@ -27,10 +27,13 @@ type options struct {
 	task         string
 	allowHome    bool
 	debug        *bool
+	forkFrom     string // session to fork ("last" by default)
+	forkAt       int    // user turn to fork before; 0 copies the whole session
+	rerun        bool   // re-send that turn in the fork
 }
 
 var commands = map[string]bool{
-	"run": true, "sessions": true, "resume": true, "replay": true,
+	"run": true, "sessions": true, "resume": true, "replay": true, "fork": true,
 	"bench": true, "models": true, "index": true, "serve": true,
 	"help": true, "version": true,
 }
@@ -72,6 +75,18 @@ func parseArgs(args []string) (options, error) {
 			o.showThinking = true
 		case a == "--plan":
 			o.plan = true
+		case a == "--rerun":
+			o.rerun = true
+		case a == "--at":
+			v, err := need(a)
+			if err != nil {
+				return o, err
+			}
+			n, err := strconv.Atoi(v)
+			if err != nil || n < 1 {
+				return o, fmt.Errorf("--at must be a turn number (1 or more)")
+			}
+			o.forkAt = n
 		case a == "--rebuild":
 			o.rebuild = true
 		case a == "--debug" || strings.HasPrefix(a, "--debug="):
@@ -163,6 +178,11 @@ func normalize(o options) options {
 	case "replay":
 		if len(o.prompt) == 0 {
 			o.prompt = []string{"last"}
+		}
+	case "fork":
+		o.forkFrom = "last"
+		if len(o.prompt) > 0 {
+			o.forkFrom, o.prompt = o.prompt[0], o.prompt[1:]
 		}
 	}
 	return o

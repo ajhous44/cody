@@ -225,3 +225,20 @@ test('plan gate shows the plan before anything changes and blocks unplanned chan
   await page.locator('#open-settings').click();
   await gate.uncheck();
 });
+
+test('fork from a past message opens a new thread with that message ready to edit', async ({ page }) => {
+  await page.goto('/?token=browser-test');
+  const users = page.locator('#transcript .user');
+  await expect(users.last()).toBeVisible();
+  const count = await users.count();
+  const text = await users.last().evaluate((n) => n.firstChild.textContent);
+  const threads = page.locator('.item.thread');
+  const before = await threads.count();
+
+  await users.last().locator('.fork').click();
+  await expect(page.locator('#input')).toHaveValue(text);
+  await expect(threads).toHaveCount(before + 1);
+  await expect(page.locator('.item.thread.active')).toContainText('(fork)');
+  // The fork holds everything before that message, not the message itself.
+  await expect(users).toHaveCount(count - 1);
+});

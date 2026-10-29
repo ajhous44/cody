@@ -195,7 +195,9 @@
   .composer-wrap { padding: 8px 24px 10px; }
   .sidebar-top { display: flex; align-items: center; gap: 8px; padding: 14px 14px 16px; }
   .sidebar-top .brand { flex: 1; }
-  .user { align-self: flex-end; max-width: 90%; background: var(--panel-2); padding: 11px 16px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
+  .user { position: relative; align-self: flex-end; max-width: 90%; background: var(--panel-2); padding: 11px 16px; border-radius: 14px; white-space: pre-wrap; word-break: break-word; }
+  .user .fork { position: absolute; top: -9px; right: 10px; opacity: 0; font-size: 11px; padding: 1px 8px; border-radius: 8px; background: var(--panel); color: var(--dim); border: 1px solid var(--line); cursor: pointer; }
+  .user:hover .fork, .user .fork:focus-visible { opacity: 1; }
   .history-more { align-self: center; background: var(--panel); color: var(--dim); border: 1px solid var(--line); border-radius: 999px; padding: 6px 14px; font-size: 12px; }
   .history-more:hover { color: var(--text); border-color: var(--accent); }
   .assistant { word-break: break-word; }
@@ -950,9 +952,33 @@
     if (fresh) scroll();
   }
 
+  // Continue in a new thread holding everything before this turn, with the
+  // turn's text back in the composer to edit or resend.
+  async function forkAt(turn) {
+    try {
+      const out = await api("/api/session/fork", { path: activeSpace, id: activeThread, turn });
+      loadThreads(activeSpace).then(renderTree);
+      if (out.prefill) {
+        input.value = out.prefill;
+        input.dispatchEvent(new Event("input"));
+        input.focus();
+      }
+    } catch (e) {
+      errorLine("cody: " + e.message);
+    }
+  }
+
   function appendHistoryMessage(m) {
     if (m.role === "user") {
-      el("div", "user", m.text || "");
+      const msg = el("div", "user", m.text || "");
+      if (m.turn) {
+        const fork = document.createElement("button");
+        fork.className = "fork";
+        fork.textContent = "fork";
+        fork.title = "Continue in a new thread from before this message";
+        fork.addEventListener("click", () => forkAt(m.turn));
+        msg.appendChild(fork);
+      }
     } else if (m.role === "assistant") {
       if (m.text) el("div", "assistant").innerHTML = mdToHTML(m.text);
       for (const t of m.tools || []) {
@@ -1117,6 +1143,13 @@
         e.stopPropagation();
         showMenu(e.clientX, e.clientY, [
           { label: "rename", action: () => startRename("thread", path, t.id) },
+          {
+            label: "fork",
+            action: () => api("/api/session/fork", { path, id: t.id, turn: 0 })
+              .then(() => loadThreads(path))
+              .catch((err) => errorLine("cody: " + err.message))
+              .then(renderTree),
+          },
           {
             label: "delete",
             danger: true,

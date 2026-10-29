@@ -320,6 +320,55 @@ func (s *Server) handleSession(w http.ResponseWriter, r *http.Request) {
 	s.handleSessionOpen(w, r)
 }
 
+// handleSessionFork copies a thread up to (not including) one of its user
+// turns into a new thread and opens it; turn 0 copies the whole thread. The
+// reply carries that turn's text so the composer can offer it for editing.
+func (s *Server) handleSessionFork(w http.ResponseWriter, r *http.Request) {
+	var body struct {
+		ID   string `json:"id"`
+		Path string `json:"path"`
+		Turn int    `json:"turn"`
+	}
+	if !s.decode(w, r, &body) {
+		return
+	}
+	root, ok := s.rootFor(body.Path)
+	if !ok {
+		http.Error(w, "unknown project", http.StatusBadRequest)
+		return
+	}
+	rr, err := s.runnerFor(root)
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusInternalServerError)
+		return
+	}
+	if !s.reserve(rr) {
+		http.Error(w, "a turn is running in this project", http.StatusConflict)
+		return
+	}
+	id := strings.TrimSpace(body.ID)
+	if id == "" {
+		id = rr.eng.SessionID()
+	}
+	forked, prefill, err := session.Fork(root, id, body.Turn)
+	if err == nil {
+		err = rr.eng.Resume(forked)
+	}
+	err = errors.Join(err, s.release(rr))
+	if err != nil {
+		http.Error(w, err.Error(), http.StatusBadRequest)
+		return
+	}
+	if root != s.activeRootPath() {
+		if err := s.switchSpace(root); err != nil {
+			http.Error(w, err.Error(), http.StatusBadRequest)
+			return
+		}
+	}
+	s.broadcast(s.stateEventFull())
+	s.writeJSON(w, map[string]string{"session": forked, "prefill": prefill})
+}
+
 func (s *Server) handleSessionOpen(w http.ResponseWriter, r *http.Request) {
 	var body struct {
 		ID   string `json:"id"`

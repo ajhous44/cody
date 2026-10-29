@@ -6,6 +6,7 @@ import (
 	"crypto/sha1"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -177,6 +178,70 @@ func Load(root, id string) (string, []Record, error) {
 		return "", nil, err
 	}
 	return id, recs, nil
+}
+
+// Fork writes a new session holding srcID's conversation from before user turn
+// `turn` (1-based, counting the user's own messages), so it can continue
+// differently from there; turn 0 copies the whole conversation. The source is
+// never modified. It returns the new id and the text of that turn, which
+// clients offer for editing or re-sending.
+func Fork(root, srcID string, turn int) (string, string, error) {
+	if turn < 0 {
+		return "", "", errors.New("turn must be 0 or more")
+	}
+	src, recs, err := Load(root, srcID)
+	if err != nil {
+		return "", "", err
+	}
+	var out []Record
+	var prefill, first string
+	n := 0
+	for _, r := range recs {
+		if r.Type == "message" && r.Role == "user" {
+			n++
+			if first == "" {
+				first = r.Text
+			}
+			if n == turn {
+				prefill = r.Text
+				break
+			}
+		}
+		switch r.Type {
+		case "meta":
+			meta := map[string]string{}
+			for k, v := range r.Meta {
+				meta[k] = v
+			}
+			meta["forked_from"] = src // a fork of a fork names its direct parent
+			// The fork starts now and records where it came from.
+			out = append(out, Record{Type: "meta", Meta: meta})
+		case "message":
+			out = append(out, r)
+		}
+	}
+	if turn > n {
+		return "", "", fmt.Errorf("session %s has %d user turns", src, n)
+	}
+	if len(out) == 0 || out[0].Type != "meta" {
+		out = append([]Record{{Type: "meta", Meta: map[string]string{"forked_from": src}}}, out...)
+	}
+	dst := New(root, "")
+	err = dst.AppendBatch(out)
+	if closeErr := dst.Close(); err == nil {
+		err = closeErr
+	}
+	if err != nil {
+		return "", "", err
+	}
+	title := Title(root, src)
+	if title == "" {
+		title = firstLine(first, 60)
+	}
+	if err := Rename(root, dst.ID(), strings.TrimSpace(title+" (fork)")); err != nil {
+		return "", "", err
+	}
+	return dst.ID(), prefill, nil
 }
 
 func loadFile(path string, limit int) ([]Record, error) {

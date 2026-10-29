@@ -236,3 +236,57 @@ func TestConcurrentRenamesKeepEveryTitle(t *testing.T) {
 		t.Fatalf("cached title not refreshed: %q %v", Title(root, ids[0]), err)
 	}
 }
+
+func TestForkCopiesHistoryBeforeTurn(t *testing.T) {
+	t.Setenv("CODY_CONFIG_DIR", t.TempDir())
+	root := t.TempDir()
+	src := New(root, "")
+	recs := []Record{
+		{Type: "meta", Meta: map[string]string{"model": "m"}},
+		{Type: "message", Role: "user", Text: "first ask"},
+		{Type: "message", Role: "assistant", Text: "", ToolCalls: []ToolCall{{ID: "c1", Name: "read", Args: "{}"}}},
+		{Type: "message", Role: "tool", ToolCallID: "c1", Text: "file"},
+		{Type: "usage"},
+		{Type: "message", Role: "assistant", Text: "first answer"},
+		{Type: "message", Role: "user", Text: "second ask"},
+		{Type: "message", Role: "assistant", Text: "second answer"},
+	}
+	if err := src.AppendBatch(recs); err != nil {
+		t.Fatal(err)
+	}
+	src.Close()
+	before, _ := os.ReadFile(src.Path())
+
+	id, prefill, err := Fork(root, src.ID(), 2)
+	if err != nil || prefill != "second ask" || id == src.ID() {
+		t.Fatalf("fork: %q %q %v", id, prefill, err)
+	}
+	_, got, err := Load(root, id)
+	if err != nil {
+		t.Fatal(err)
+	}
+	var texts []string
+	for _, r := range got {
+		if r.Type == "message" {
+			texts = append(texts, r.Role+":"+r.Text)
+		}
+	}
+	if len(got) != 5 || got[0].Type != "meta" || got[0].Meta["forked_from"] != src.ID() || got[0].Meta["model"] != "m" ||
+		fmt.Sprint(texts) != "[user:first ask assistant: tool:file assistant:first answer]" {
+		t.Fatalf("fork records: %+v", got)
+	}
+	if Title(root, id) != "first ask (fork)" {
+		t.Fatalf("title %q", Title(root, id))
+	}
+	if after, _ := os.ReadFile(src.Path()); string(after) != string(before) {
+		t.Fatal("source session changed")
+	}
+
+	whole, prefill, err := Fork(root, id, 0)
+	if _, all, _ := Load(root, whole); err != nil || prefill != "" || len(all) != 5 || all[0].Meta["forked_from"] != id {
+		t.Fatalf("whole-thread fork of a fork: %v %q %+v", err, prefill, all)
+	}
+	if _, _, err := Fork(root, src.ID(), 3); err == nil {
+		t.Fatal("forked past the last turn")
+	}
+}

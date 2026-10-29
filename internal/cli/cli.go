@@ -90,6 +90,22 @@ func Run(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	if opts.command == "fork" {
+		if opts.rerun && opts.forkAt == 0 {
+			return fail(fmt.Errorf("--rerun needs --at N, the turn to re-send"))
+		}
+		forked, prefill, err := session.Fork(root, opts.forkFrom, opts.forkAt)
+		if err != nil {
+			return fail(err)
+		}
+		fmt.Fprintf(os.Stderr, "forked %s into %s\n", opts.forkFrom, forked)
+		opts.resume = forked
+		if opts.rerun {
+			opts.prompt = []string{prefill}
+		} else if prefill != "" {
+			fmt.Fprintf(os.Stderr, "turn %d was: %s\n", opts.forkAt, prefill)
+		}
+	}
 	var resumeID string
 	var resumeRecs []session.Record
 	if opts.resume != "" {
@@ -270,6 +286,25 @@ func (a *app) command(line string) bool {
 			stats.Files+stats.Unchanged, stats.Chunks, stats.Embedded, stats.Unchanged, stats.Removed)
 	case "/clear":
 		a.newSession()
+	case "/fork":
+		turn := 0
+		if len(fields) > 1 {
+			n, err := strconv.Atoi(fields[1])
+			if err != nil || n < 1 {
+				a.u.Errorf("cody: /fork takes a turn number from cody replay\n")
+				return false
+			}
+			turn = n
+		}
+		prefill, err := a.eng.Fork("", turn)
+		if err != nil {
+			a.u.Errorf("cody: %v\n", err)
+			return false
+		}
+		a.u.Printf("forked into session %s\n", a.eng.SessionID())
+		if prefill != "" {
+			a.u.Printf("turn %d was: %s\n", turn, prefill)
+		}
 	case "/sessions":
 		infos, err := session.List(a.root)
 		if err != nil {
@@ -296,6 +331,7 @@ func (a *app) help() {
 		"/index [--rebuild] build or refresh the semantic index",
 		"/clear             start a new session",
 		"/sessions          list recent sessions",
+		"/fork [N]          continue in a copy of this session before turn N",
 		"/exit              quit",
 	}, "\n"))
 }
@@ -410,11 +446,13 @@ func cmdReplay(opts options) int {
 		tool.NewEdit(root),
 		tool.NewBash(root),
 	)
+	turn := 0
 	for _, r := range recs {
 		switch {
 		case r.Type == "meta" || r.Type == "usage":
 		case r.Role == "user":
-			fmt.Printf("\n> %s\n", r.Text)
+			turn++ // the number /fork and cody fork --at take
+			fmt.Printf("\n[%d] > %s\n", turn, r.Text)
 		case r.Role == "assistant":
 			if strings.TrimSpace(r.Text) != "" {
 				fmt.Println(r.Text)
@@ -746,14 +784,6 @@ func workspace(opts options) (string, error) {
 	return root, nil
 }
 
-func recordFromMessage(m provider.Message) session.Record {
-	r := session.Record{Type: "message", Role: m.Role, Text: m.Content, ToolCallID: m.ToolCallID, Name: m.Name}
-	for _, c := range m.ToolCalls {
-		r.ToolCalls = append(r.ToolCalls, session.ToolCall{ID: c.ID, Name: c.Function.Name, Args: c.Function.Arguments})
-	}
-	return r
-}
-
 func findMeta(recs []session.Record) map[string]string {
 	for _, r := range recs {
 		if r.Type == "meta" {
@@ -792,7 +822,10 @@ usage:
   cody run "prompt"        one-shot prompt
   cody resume [id|last]    resume a session
   cody sessions            list sessions for this workspace
-  cody replay [id|last]    print a session transcript
+  cody replay [id|last]    print a session transcript (user turns numbered)
+  cody fork [id|last] [--at N] [--rerun]
+                           continue in a copy of a session before turn N;
+                           --rerun re-sends turn N in the copy
   cody models [filter]     list models for the current provider
   cody index [--rebuild]   build or refresh the local semantic index
   cody serve [flags]       serve the web GUI on http://127.0.0.1:8765

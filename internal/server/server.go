@@ -356,6 +356,7 @@ type historyMessage struct {
 	Text       string        `json:"text,omitempty"`
 	Tools      []historyTool `json:"tools,omitempty"`
 	ToolCallID string        `json:"tool_call_id,omitempty"`
+	Turn       int           `json:"turn,omitempty"` // user turn number, for forking
 }
 
 type historyTool struct {
@@ -381,6 +382,7 @@ func (s *Server) Handler() http.Handler {
 	mux.HandleFunc("/api/sessions", s.auth(s.handleSessions))
 	mux.HandleFunc("/api/session", s.auth(s.handleSession))
 	mux.HandleFunc("/api/session/rename", s.auth(s.handleSessionRename))
+	mux.HandleFunc("/api/session/fork", s.auth(s.handleSessionFork))
 	mux.HandleFunc("/api/files", s.auth(s.handleFiles))
 	mux.HandleFunc("/api/file", s.auth(s.handleFile))
 	mux.HandleFunc("/api/fs", s.auth(s.handleFS))
@@ -848,12 +850,23 @@ func (s *Server) stateEventWith(full bool) wireEvent {
 }
 
 func historyOf(msgs []provider.Message) []historyMessage {
+	// Turns are numbered over the whole thread before trimming, so a fork
+	// point means the same message as in the session file.
+	turns := make([]int, len(msgs))
+	n := 0
+	for i, m := range msgs {
+		if m.Role == "user" {
+			n++
+			turns[i] = n
+		}
+	}
 	if len(msgs) > maxHistoryMessages {
+		turns = turns[len(msgs)-maxHistoryMessages:]
 		msgs = msgs[len(msgs)-maxHistoryMessages:]
 	}
 	out := make([]historyMessage, 0, len(msgs))
-	for _, m := range msgs {
-		h := historyMessage{Role: m.Role, Text: truncate(m.Content, maxHistoryText), ToolCallID: m.ToolCallID}
+	for i, m := range msgs {
+		h := historyMessage{Role: m.Role, Text: truncate(m.Content, maxHistoryText), ToolCallID: m.ToolCallID, Turn: turns[i]}
 		for _, c := range m.ToolCalls {
 			h.Tools = append(h.Tools, historyTool{ID: c.ID, Name: c.Function.Name, Args: c.Function.Arguments})
 		}
