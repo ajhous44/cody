@@ -153,7 +153,7 @@ The `cody` mark sits at the top of the left sidebar, and each sidebar carries it
 
 ### Models and settings
 
-The model control in the composer is a searchable picker grouped by provider. It shows model names by default; a "show model details" toggle in settings adds parameter size, quantization, and disk size (remembered per browser). OpenRouter models (id, context, prompt price) only appear once an OpenRouter key is configured, so the default local setup does not fetch a hosted model catalog. Opt-in web tools can access the internet independently. Selecting a model switches the provider and model together. Typing a name that is not in the list warns subtly — without blocking — and uses it anyway, so custom or unlisted model ids still work.
+The model control in the composer is a searchable picker grouped by provider. It shows model names; hover one for its size and quantization (Ollama) or context window and price (OpenRouter). If Ollama is installed but stopped, opening the picker starts it, and the picker says so when Ollama cannot be reached. OpenRouter models (id, context, prompt price) only appear once an OpenRouter key is configured, so the default local setup does not fetch a hosted model catalog. Opt-in web tools can access the internet independently. Selecting a model switches the provider and model together. Typing a name that is not in the list warns subtly — without blocking — and uses it anyway, so custom or unlisted model ids still work.
 
 The gear at the bottom of the projects sidebar opens a settings view in the middle pane:
 
@@ -198,7 +198,7 @@ CODY_BROWSER_TEST=1 CODY_WEB_TEST=1 go test ./internal/tool -run 'TestBrowser|Te
 make macapp                # builds dist/Cody.app
 ```
 
-`Cody.app` is a native window (AppKit + WKWebView) with no browser: it bundles the cody binary, launches `cody serve` as a child process on a free loopback port with a private token, and loads the same UI. On first launch it asks for a workspace folder and remembers it; `Cmd+O` switches folders, `Cmd+Q` stops the engine.
+`Cody.app` is a native window (AppKit + WKWebView) with no browser: it bundles the cody binary, launches `cody serve` as a child process on a free loopback port with a private token, and loads the same UI. On first launch it asks for a workspace folder and remembers it; `Cmd+O` switches folders, `Cmd+Q` stops the engine. The engine also exits if the app crashes or is force-quit, so no server is left running.
 
 The window is borderless: there is no system title bar. Close, minimize, and zoom live in the app's own header and talk to AppKit through a small JS bridge, the header itself is the drag handle, and thin edge/corner overlays provide native-feeling resize cursors. Browser mode hides the custom dots and uses the browser's own chrome instead.
 
@@ -332,6 +332,7 @@ internal/index           SQLite semantic index, chunking, embeddings, cosine sea
 internal/session         append-only JSONL store
 internal/bench           benchmark runner and tasks
 internal/ui              terminal rendering and approvals
+internal/clip            UTF-8-safe text clipping
 internal/config          config file and env resolution
 internal/prompt          system prompt and scoped AGENTS.md/CODY.md loading
 ```
