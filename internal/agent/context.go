@@ -9,6 +9,13 @@ import (
 	"github.com/ajhous44/cody/v3/internal/provider"
 )
 
+// ContextTokens is the context window the agent trims history to.
+func (a *Agent) ContextTokens() int {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	return a.opts.ContextTokens
+}
+
 func (a *Agent) SetLimits(window, output int) {
 	a.mu.Lock()
 	defer a.mu.Unlock()

@@ -23,6 +23,8 @@ type options struct {
 	showThinking bool
 	plan         bool
 	sandbox      string
+	plain        bool // line input without the editor, picker, or live status
+	pickResume   bool // `cody resume` without an id: pick one on a terminal
 	rebuild      bool
 	runs         int
 	task         string
@@ -82,6 +84,8 @@ func parseArgs(args []string) (options, error) {
 				return o, err
 			}
 			o.sandbox = v
+		case a == "--plain":
+			o.plain = true
 		case a == "--rerun":
 			o.rerun = true
 		case a == "--at":
@@ -179,7 +183,7 @@ func normalize(o options) options {
 				o.resume = o.prompt[0]
 				o.prompt = o.prompt[1:]
 			} else {
-				o.resume = "last"
+				o.resume, o.pickResume = "last", true
 			}
 		}
 	case "replay":

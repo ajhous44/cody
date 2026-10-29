@@ -218,7 +218,19 @@ The script signs both executables and the app with the hardened runtime, submits
 
 The native Mac app is optional. The CLI and browser GUI work without it. Signed apps can be downloaded from GitHub Releases; Mac App Store distribution is not required. The wrapper currently has no automatic updater: install a newer release to update it.
 
-In the interactive loop: `/help`, `/model`, `/provider`, `/approval`, `/think`, `/plan`, `/index`, `/clear`, `/sessions`, `/fork`, `/exit`. Ctrl+C cancels the running turn; press it again to quit.
+In the interactive loop: `/help`, `/model`, `/provider`, `/approval`, `/think`, `/plan`, `/index`, `/clear`, `/sessions`, `/resume`, `/fork`, `/exit`. Ctrl+C cancels the running turn; press it again to quit.
+
+### Terminal UI
+
+In a terminal, the prompt is a small line editor that stays inline: no full-screen mode, so your terminal's own scrollback and search keep the whole transcript.
+
+- **Editing:** arrows, Home/End, Ctrl+A/E, Ctrl+U/K (clear to start/end), Ctrl+W (delete word), Alt+B/F (move by word). A multi-line paste arrives as one prompt.
+- **History:** Up/Down recall earlier prompts, kept across runs in `~/.cody/history`.
+- **Quitting:** Ctrl+C clears the line, or quits on an empty one; Ctrl+D quits.
+- **Sessions:** `cody resume` with no id, or `/resume`, opens a picker: type to filter, arrows to move, Enter to open, Esc to cancel. After `/fork` or `cody fork`, the forked message is already in the editor.
+- **Live status:** while the model works, the spinner shows elapsed time, context used versus the window, and output tokens (`thinking · 12.4s · ctx 8.1k/64k · out 640`). Each turn ends with one summary line: time, tokens in (and cached), out, and context use.
+
+`--plain` or `CODY_PLAIN=1` keeps plain line input; piped input and non-terminals use it automatically.
 
 ### Approvals
 
@@ -299,7 +311,7 @@ cody index
 }
 ```
 
-Environment overrides: `CODY_PROVIDER`, `CODY_MODEL`, `CODY_APPROVAL`, `CODY_API_KEY`, `CODY_NO_AUTOSTART`, `CODY_EMBED_PROVIDER`, `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, `CODY_PLAN`, `CODY_SANDBOX`, `BRAVE_SEARCH_API_KEY`. `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, and `CODY_PLAN` accept `true`/`false` or `1`/`0`. Debug mode (also `--debug[=BOOL]` or the GUI settings toggle) appends the provider's raw status and message to errors and lists every retry. Overrides apply only to the running process; saving GUI settings writes just the values you changed, so environment values and env-provided keys never reach `config.json`. `CODY_CONFIG_DIR` overrides the default `~/.cody` directory for settings, sessions, and indexes.
+Environment overrides: `CODY_PROVIDER`, `CODY_MODEL`, `CODY_APPROVAL`, `CODY_API_KEY`, `CODY_NO_AUTOSTART`, `CODY_EMBED_PROVIDER`, `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, `CODY_PLAN`, `CODY_SANDBOX`, `CODY_PLAIN`, `BRAVE_SEARCH_API_KEY`. `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, and `CODY_PLAN` accept `true`/`false` or `1`/`0`. Debug mode (also `--debug[=BOOL]` or the GUI settings toggle) appends the provider's raw status and message to errors and lists every retry. Overrides apply only to the running process; saving GUI settings writes just the values you changed, so environment values and env-provided keys never reach `config.json`. `CODY_CONFIG_DIR` overrides the default `~/.cody` directory for settings, sessions, and indexes.
 
 Any OpenAI-compatible endpoint works as an extra provider: add a `providers.<name>.base_url` entry and pass `-p <name>`.
 
@@ -381,7 +393,8 @@ internal/tool            seven core tools; opt-in web_fetch, web_search, browser
 internal/index           SQLite semantic index, chunking, embeddings, cosine search
 internal/session         append-only JSONL store
 internal/bench           benchmark runner and tasks
-internal/ui              terminal rendering and approvals
+internal/ui              terminal rendering, line editor, session picker, approvals
+internal/term            raw terminal mode and width (Unix and Windows)
 internal/clip            UTF-8-safe text clipping
 internal/config          config file and env resolution
 internal/prompt          system prompt and scoped AGENTS.md/CODY.md loading
@@ -417,7 +430,7 @@ Clients never own the model loop. The CLI and the web GUI both drive `internal/e
 
 - [x] Thin web GUI over the same engine (`cody serve`).
 - [x] Plan gate: propose a short plan before acting on multi-step tasks.
-- [ ] Small TUI: scrollback, session picker, live token/timing budget.
+- [x] Small TUI: scrollback, session picker, live token/timing budget.
 - [ ] Anthropic provider adapter.
 - [x] OS-level sandbox profile and a documented container profile.
 - [x] Optional skills directory with lazy loading (no always-on MCP).

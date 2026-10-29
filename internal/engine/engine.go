@@ -378,6 +378,14 @@ func (e *Engine) Resume(id string) error {
 	return nil
 }
 
+// ContextLimit is the current context window, for the CLI's live status.
+func (e *Engine) ContextLimit() int {
+	e.mu.Lock()
+	ag := e.ag
+	e.mu.Unlock()
+	return ag.ContextTokens()
+}
+
 // Fork switches to a new session copied from id (the current session when
 // empty) before user turn `turn`; see session.Fork. It returns that turn's text.
 func (e *Engine) Fork(id string, turn int) (string, error) {

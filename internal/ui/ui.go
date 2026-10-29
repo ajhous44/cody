@@ -1,7 +1,6 @@
 package ui
 
 import (
-	"bufio"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -13,11 +12,14 @@ import (
 	"unicode/utf8"
 
 	"github.com/ajhous44/cody/v3/internal/agent"
+	"github.com/ajhous44/cody/v3/internal/term"
 	"github.com/ajhous44/cody/v3/internal/tool"
 )
 
 type UI struct {
-	in           *bufio.Reader
+	keys         *keyReader
+	ed           *editor // set by EnableTerminal: the inline TUI is active
+	inFd         uintptr
 	out          io.Writer
 	errOut       io.Writer
 	color        bool
@@ -30,10 +32,137 @@ type UI struct {
 	spinMu       sync.Mutex
 	spinStop     chan struct{}
 	spinDone     chan struct{}
+
+	// Live turn status, shown on the spinner line and summarized at EndTurn.
+	statMu     sync.Mutex
+	turnStart  time.Time
+	ctxLimit   func() int
+	turnIn     int
+	turnOut    int
+	turnCache  int
+	lastPrompt int
 }
 
 func New(in io.Reader, out, errOut io.Writer) *UI {
-	return &UI{in: bufio.NewReader(in), out: out, errOut: errOut, color: isTerminal(out)}
+	return &UI{keys: newKeyReader(in), out: out, errOut: errOut, color: isTerminal(out)}
+}
+
+// EnableTerminal switches to the inline TUI (line editor with history,
+// session picker, live status) when in and out are both terminals, and
+// reports whether it did. Otherwise plain line input stays in place. There is
+// no alternate screen: the terminal's own scrollback keeps the transcript.
+func (u *UI) EnableTerminal(in, out *os.File, histPath string) bool {
+	if !term.IsTerminal(in.Fd()) || !term.IsTerminal(out.Fd()) {
+		return false
+	}
+	term.EnableVT(out.Fd())
+	u.inFd = in.Fd()
+	outFd := out.Fd()
+	u.ed = newEditor(u.keys, u.out, func() int { return term.Width(outFd) }, histPath)
+	return true
+}
+
+func (u *UI) Terminal() bool { return u.ed != nil }
+
+// ReadLine reads the next prompt. prefill starts the input (a forked
+// message); without a terminal it is printed so it can be retyped.
+func (u *UI) ReadLine(prompt, prefill string) (string, error) {
+	if u.ed == nil {
+		if prefill != "" {
+			u.Printf("%s\n", u.Dim("message to edit and resend: "+prefill))
+		}
+		return u.Ask(prompt)
+	}
+	u.StopThinking()
+	u.breakLine()
+	restore, err := term.MakeRaw(u.inFd)
+	if err != nil {
+		return u.Ask(prompt)
+	}
+	defer restore()
+	line, err := u.ed.readLine(prompt, prefill)
+	return strings.TrimSpace(line), err
+}
+
+// Pick shows a filterable list on a terminal and returns the chosen index,
+// or -1 when cancelled or when there is no terminal.
+func (u *UI) Pick(title string, items []string) (int, error) {
+	if u.ed == nil || len(items) == 0 {
+		return -1, nil
+	}
+	u.StopThinking()
+	u.breakLine()
+	restore, err := term.MakeRaw(u.inFd)
+	if err != nil {
+		return -1, err
+	}
+	defer restore()
+	return u.ed.pick(title, items)
+}
+
+// BeginTurn starts the live status (elapsed time, context use, output
+// tokens). limit reports the context window; it can change during the turn.
+func (u *UI) BeginTurn(limit func() int) {
+	u.statMu.Lock()
+	u.turnStart, u.ctxLimit = time.Now(), limit
+	u.turnIn, u.turnOut, u.turnCache, u.lastPrompt = 0, 0, 0, 0
+	u.statMu.Unlock()
+}
+
+// EndTurn prints the turn's one-line summary.
+func (u *UI) EndTurn() {
+	u.statMu.Lock()
+	start, in, out, cache, last, limit := u.turnStart, u.turnIn, u.turnOut, u.turnCache, u.lastPrompt, u.ctxLimit
+	u.turnStart = time.Time{}
+	u.statMu.Unlock()
+	if start.IsZero() {
+		return
+	}
+	parts := []string{fmt.Sprintf("%.1fs", time.Since(start).Seconds())}
+	if in > 0 || out > 0 {
+		p := "in " + shortCount(in)
+		if cache > 0 {
+			p += " (cache " + shortCount(cache) + ")"
+		}
+		parts = append(parts, p, "out "+shortCount(out))
+	}
+	if l := callLimit(limit); last > 0 && l > 0 {
+		parts = append(parts, fmt.Sprintf("ctx %d%% of %s", last*100/l, shortCount(l)))
+	}
+	u.breakLine()
+	u.Printf("%s\n", u.paint(dim, "  "+strings.Join(parts, " · ")))
+}
+
+// status is the spinner line's live suffix during a turn.
+func (u *UI) status() string {
+	u.statMu.Lock()
+	start, out, last, limit := u.turnStart, u.turnOut, u.lastPrompt, u.ctxLimit
+	u.statMu.Unlock()
+	if start.IsZero() {
+		return ""
+	}
+	parts := []string{fmt.Sprintf("%.1fs", time.Since(start).Seconds())}
+	if l := callLimit(limit); last > 0 && l > 0 {
+		parts = append(parts, "ctx "+shortCount(last)+"/"+shortCount(l))
+	}
+	if out > 0 {
+		parts = append(parts, "out "+shortCount(out))
+	}
+	return " · " + strings.Join(parts, " · ")
+}
+
+func callLimit(f func() int) int {
+	if f == nil {
+		return 0
+	}
+	return f()
+}
+
+func shortCount(n int) string {
+	if n < 1000 {
+		return fmt.Sprint(n)
+	}
+	return fmt.Sprintf("%.1fk", float64(n)/1000)
 }
 
 func isTerminal(w io.Writer) bool {
@@ -148,7 +277,19 @@ func (u *UI) Event(e agent.Event) {
 			}
 		}
 	case agent.KindUsage:
-		if e.Usage != nil {
+		u.statMu.Lock()
+		inTurn := !u.turnStart.IsZero()
+		if inTurn && e.Usage != nil {
+			u.turnIn += e.Usage.PromptTokens
+			u.turnOut += e.Usage.CompletionTokens
+			u.lastPrompt = e.Usage.PromptTokens
+			if d := e.Usage.PromptDetails; d != nil {
+				u.turnCache += d.CachedTokens
+			}
+		}
+		u.statMu.Unlock()
+		// During a turn, usage is summarized once at EndTurn.
+		if e.Usage != nil && !inTurn {
 			text := fmt.Sprintf("  tokens in/out %d/%d", e.Usage.PromptTokens, e.Usage.CompletionTokens)
 			if d := e.Usage.PromptDetails; d != nil {
 				text += fmt.Sprintf(" · cache read/write %d/%d", d.CachedTokens, d.CacheWriteTokens)
@@ -264,7 +405,7 @@ func (u *UI) StartThinking() {
 			case <-ticker.C:
 				face := thinkingFaces[i%len(thinkingFaces)]
 				dots := thinkingDots[(i/2)%len(thinkingDots)]
-				fmt.Fprintf(u.out, "\r\x1b[K%s %s", u.paint(cyan, face), u.paint(dim, "thinking"+dots))
+				fmt.Fprintf(u.out, "\r\x1b[K%s %s", u.paint(cyan, face), u.paint(dim, "thinking"+dots+u.status()))
 			}
 		}
 	}()
@@ -320,13 +461,7 @@ func (u *UI) Ask(prompt string) (string, error) {
 	return strings.TrimSpace(line), err
 }
 
-func (u *UI) readLine() (string, error) {
-	line, err := u.in.ReadString('\n')
-	if err != nil && line == "" {
-		return "", err
-	}
-	return line, nil
-}
+func (u *UI) readLine() (string, error) { return u.keys.readLine() }
 
 func (u *UI) breakLine() {
 	if u.midLine {

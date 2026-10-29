@@ -36,12 +36,13 @@ import (
 var Version = "3.0.0"
 
 type app struct {
-	cfg    *config.Config
-	root   string
-	u      *ui.UI
-	eng    *engine.Engine
-	mu     sync.Mutex
-	cancel context.CancelFunc
+	cfg     *config.Config
+	root    string
+	u       *ui.UI
+	eng     *engine.Engine
+	mu      sync.Mutex
+	cancel  context.CancelFunc
+	prefill string // next prompt's starting text, e.g. a forked message
 }
 
 func Run(args []string) int {
@@ -93,6 +94,29 @@ func Run(args []string) int {
 	if err != nil {
 		return fail(err)
 	}
+	u := ui.New(os.Stdin, os.Stdout, os.Stderr)
+	u.SetThinkingVisible(opts.showThinking)
+	if !opts.plain && os.Getenv("CODY_PLAIN") == "" {
+		_ = os.MkdirAll(config.Dir(), 0o700)
+		u.EnableTerminal(os.Stdin, os.Stdout, filepath.Join(config.Dir(), "history"))
+	}
+	if opts.pickResume && u.Terminal() {
+		infos, err := session.List(root)
+		if err != nil {
+			return fail(err)
+		}
+		if len(infos) > 0 {
+			idx, err := u.Pick("resume a session", sessionItems(infos))
+			if err != nil {
+				return fail(err)
+			}
+			if idx < 0 {
+				return 0
+			}
+			opts.resume = infos[idx].ID
+		}
+	}
+	var forkPrefill string
 	if opts.command == "fork" {
 		if opts.rerun && opts.forkAt == 0 {
 			return fail(fmt.Errorf("--rerun needs --at N, the turn to re-send"))
@@ -105,8 +129,8 @@ func Run(args []string) int {
 		opts.resume = forked
 		if opts.rerun {
 			opts.prompt = []string{prefill}
-		} else if prefill != "" {
-			fmt.Fprintf(os.Stderr, "turn %d was: %s\n", opts.forkAt, prefill)
+		} else {
+			forkPrefill = prefill // the REPL starts with it in the editor
 		}
 	}
 	var resumeID string
@@ -125,9 +149,7 @@ func Run(args []string) int {
 			}
 		}
 	}
-	u := ui.New(os.Stdin, os.Stdout, os.Stderr)
-	u.SetThinkingVisible(opts.showThinking)
-	a := &app{cfg: cfg, root: root, u: u}
+	a := &app{cfg: cfg, root: root, u: u, prefill: forkPrefill}
 	a.eng, err = engine.New(engine.Options{
 		Root:    root,
 		Cfg:     cfg,
@@ -189,7 +211,11 @@ func (a *app) repl() int {
 		}
 	}()
 	for {
-		line, err := a.u.Ask("> ")
+		line, err := a.u.ReadLine("> ", a.prefill)
+		a.prefill = ""
+		if errors.Is(err, ui.ErrInterrupt) {
+			return 130
+		}
 		if errors.Is(err, io.EOF) {
 			fmt.Fprintln(os.Stdout)
 			return 0
@@ -308,9 +334,26 @@ func (a *app) command(line string) bool {
 			return false
 		}
 		a.u.Printf("forked into session %s\n", a.eng.SessionID())
-		if prefill != "" {
-			a.u.Printf("turn %d was: %s\n", turn, prefill)
+		a.prefill = prefill // back in the editor to change or resend
+	case "/resume":
+		infos, err := session.List(a.root)
+		if err != nil {
+			a.u.Errorf("cody: %v\n", err)
+			return false
 		}
+		if !a.u.Terminal() {
+			a.u.Printf("pick from /sessions, then run cody resume <id>\n")
+			return false
+		}
+		idx, err := a.u.Pick("resume a session", sessionItems(infos))
+		if err != nil || idx < 0 {
+			return false
+		}
+		if err := a.eng.Resume(infos[idx].ID); err != nil {
+			a.u.Errorf("cody: %v\n", err)
+			return false
+		}
+		a.u.Printf("resumed %s (%d messages)\n", infos[idx].ID, len(a.eng.History()))
 	case "/sessions":
 		infos, err := session.List(a.root)
 		if err != nil {
@@ -338,6 +381,7 @@ func (a *app) help() {
 		"/clear             start a new session",
 		"/sessions          list recent sessions",
 		"/fork [N]          continue in a copy of this session before turn N",
+		"/resume            pick a session to continue",
 		"/exit              quit",
 	}, "\n"))
 }
@@ -357,9 +401,11 @@ func (a *app) turn(text string) {
 		cancel()
 		a.setCancel(nil)
 	}()
+	a.u.BeginTurn(a.eng.ContextLimit)
 	err := a.eng.Send(ctx, text, a.u.Event)
 	a.u.StopThinking()
 	a.u.Flush()
+	a.u.EndTurn()
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
 			a.u.Printf("\n%s\n", a.u.Dim("cancelled"))
@@ -374,9 +420,11 @@ func (a *app) turn(text string) {
 func (a *app) oneShot(text string) int {
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	a.u.BeginTurn(a.eng.ContextLimit)
 	err := a.eng.Send(ctx, text, a.u.Event)
 	a.u.StopThinking()
 	a.u.Flush()
+	a.u.EndTurn()
 	a.u.Printf("\n")
 	if err != nil {
 		if errors.Is(err, context.Canceled) {
@@ -846,6 +894,7 @@ flags:
       --yolo               shorthand for --approval yolo
       --show-thinking      print model reasoning traces (hidden by default)
       --plan               require an approved plan before any change
+      --plain              plain line input (no editor, picker, or live status)
       --sandbox MODE       off, workspace (shell writes only in the project,
                            temp, and caches), or strict (also no network)
       --resume ID          resume a session by id (or "last")
@@ -871,6 +920,15 @@ bench flags:
 config: ~/.cody/config.json
 env:    CODY_PROVIDER, CODY_MODEL, CODY_APPROVAL, CODY_API_KEY,
         CODY_NO_AUTOSTART, CODY_EMBED_PROVIDER, OLLAMA_HOST, OPENROUTER_API_KEY,
-        CODY_DEBUG, CODY_PLAN, CODY_SANDBOX
+        CODY_DEBUG, CODY_PLAN, CODY_SANDBOX, CODY_PLAIN
 `)
+}
+
+// sessionItems labels sessions for the picker, newest first.
+func sessionItems(infos []session.Info) []string {
+	items := make([]string, len(infos))
+	for i, info := range infos {
+		items[i] = info.Started.Format("Jan 02 15:04") + "  " + info.First
+	}
+	return items
 }
