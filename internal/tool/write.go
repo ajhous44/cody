@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"os"
 	"path/filepath"
 )
 
@@ -23,7 +22,7 @@ func (w *Write) Mutating() bool { return true }
 func (w *Write) Schema() json.RawMessage {
 	return objectSchema(map[string]any{
 		"path":    property("string", "File path relative to the workspace root."),
-		"content": property("string", "Full file content."),
+		"content": property("string", "Literal file content. Do not wrap code in Markdown fences unless the file itself requires them."),
 	}, "path", "content")
 }
 
@@ -43,16 +42,17 @@ func (w *Write) Run(ctx context.Context, args json.RawMessage) (string, error) {
 	if err := json.Unmarshal(args, &a); err != nil {
 		return "", fmt.Errorf("invalid arguments: %w", err)
 	}
-	abs, err := Resolve(w.root, a.Path)
+	dir, rel, err := OpenWritable(w.root, a.Path)
 	if err != nil {
 		return "", err
 	}
-	_, statErr := os.Stat(abs)
+	defer dir.Close()
+	_, statErr := dir.Stat(rel)
 	existed := statErr == nil
-	if err := os.MkdirAll(filepath.Dir(abs), 0o755); err != nil {
+	if err := dir.MkdirAll(filepath.Dir(rel), 0o755); err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(abs, []byte(a.Content), 0o644); err != nil {
+	if err := dir.WriteFile(rel, []byte(a.Content), 0o644); err != nil {
 		return "", err
 	}
 	action := "created"

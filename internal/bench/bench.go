@@ -10,10 +10,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/ajhous44/cody/internal/agent"
-	"github.com/ajhous44/cody/internal/prompt"
-	"github.com/ajhous44/cody/internal/provider"
-	"github.com/ajhous44/cody/internal/tool"
+	"github.com/ajhous44/cody/v3/internal/agent"
+	"github.com/ajhous44/cody/v3/internal/prompt"
+	"github.com/ajhous44/cody/v3/internal/provider"
+	"github.com/ajhous44/cody/v3/internal/tool"
 )
 
 type Options struct {
@@ -29,17 +29,19 @@ type Options struct {
 }
 
 type Result struct {
-	Task         string  `json:"task"`
-	Run          int     `json:"run"`
-	OK           bool    `json:"ok"`
-	Note         string  `json:"note,omitempty"`
-	WallMS       int64   `json:"wall_ms"`
-	TTFTMS       int64   `json:"ttft_ms"`
-	TokensIn     int     `json:"tokens_in"`
-	TokensOut    int     `json:"tokens_out"`
-	TokensPerSec float64 `json:"tokens_per_sec"`
-	ToolCalls    int     `json:"tool_calls"`
-	Error        string  `json:"error,omitempty"`
+	Task             string  `json:"task"`
+	Run              int     `json:"run"`
+	OK               bool    `json:"ok"`
+	Note             string  `json:"note,omitempty"`
+	WallMS           int64   `json:"wall_ms"`
+	TTFTMS           int64   `json:"ttft_ms"`
+	TokensIn         int     `json:"tokens_in"`
+	TokensOut        int     `json:"tokens_out"`
+	CacheReadTokens  int     `json:"cache_read_tokens,omitempty"`
+	CacheWriteTokens int     `json:"cache_write_tokens,omitempty"`
+	TokensPerSec     float64 `json:"tokens_per_sec"`
+	ToolCalls        int     `json:"tool_calls"`
+	Error            string  `json:"error,omitempty"`
 }
 
 func SelectTasks(name string) ([]Task, error) {
@@ -140,7 +142,8 @@ func runTask(ctx context.Context, p provider.Provider, model string, task Task, 
 	ag := agent.New(agent.Options{
 		Provider:      p,
 		Model:         model,
-		System:        prompt.Build(dir),
+		System:        prompt.Base(dir),
+		Root:          dir,
 		Tools:         tool.NewRegistry(tool.NewRead(dir), tool.NewWrite(dir), tool.NewEdit(dir), tool.NewBash(dir)),
 		Approver:      agent.ApproverFunc(func(context.Context, tool.Tool, string) (bool, error) { return true, nil }),
 		ContextTokens: 16000,
@@ -164,6 +167,10 @@ func runTask(ctx context.Context, p provider.Provider, model string, task Task, 
 			if e.Usage != nil {
 				res.TokensIn += e.Usage.PromptTokens
 				res.TokensOut += e.Usage.CompletionTokens
+				if d := e.Usage.PromptDetails; d != nil {
+					res.CacheReadTokens += d.CachedTokens
+					res.CacheWriteTokens += d.CacheWriteTokens
+				}
 			}
 		}
 	})

@@ -60,7 +60,7 @@ func TestBuildIncludesWorkspaceToolsAndRules(t *testing.T) {
 	if !strings.Contains(got, root) {
 		t.Fatalf("prompt missing workspace root:\n%s", got)
 	}
-	for _, tool := range []string{"read", "write", "edit", "bash", "grep", "glob", "search"} {
+	for _, tool := range []string{"read", "write", "edit", "bash", "grep", "glob"} {
 		if !strings.Contains(got, "- "+tool+":") {
 			t.Fatalf("prompt missing tool %q:\n%s", tool, got)
 		}
@@ -105,5 +105,48 @@ func TestBuildWithoutProjectInstructions(t *testing.T) {
 	got := Build(t.TempDir())
 	if strings.Contains(got, "Project instructions") {
 		t.Fatalf("unexpected project instructions section:\n%s", got)
+	}
+}
+
+func TestAgentsScopeAndPrecedence(t *testing.T) {
+	root := t.TempDir()
+	for path, text := range map[string]string{"CODY.md": "legacy", "AGENTS.md": "root rule", "src/AGENTS.md": "source rule", "src/nested/AGENTS.md": "nearest rule", "other/AGENTS.md": "other rule"} {
+		p := filepath.Join(root, path)
+		if err := os.MkdirAll(filepath.Dir(p), 0700); err != nil {
+			t.Fatal(err)
+		}
+		if err := os.WriteFile(p, []byte(text), 0600); err != nil {
+			t.Fatal(err)
+		}
+	}
+	base := Build(root)
+	if strings.Index(base, "legacy") > strings.Index(base, "root rule") || !strings.Contains(base, "root rule") {
+		t.Fatal("root instruction precedence missing")
+	}
+	got := ScopedInstructions(root, "src/nested/new.go")
+	if !strings.Contains(got, "source rule") || !strings.Contains(got, "nearest rule") || strings.Contains(got, "other rule") || strings.Index(got, "source rule") > strings.Index(got, "nearest rule") {
+		t.Fatalf("scope: %s", got)
+	}
+	if got := ScopedInstructions(root, "../outside/new.go"); got != "" {
+		t.Fatalf("escaped: %s", got)
+	}
+	if err := os.WriteFile(filepath.Join(root, "src/AGENTS.md"), []byte("changed rule"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if !strings.Contains(ScopedInstructions(root, "src/new.go"), "changed rule") {
+		t.Fatal("stale instructions")
+	}
+}
+
+func TestOptionalRulesOnlyForEnabledTools(t *testing.T) {
+	if got := Optional(false, false); got != "" {
+		t.Fatalf("disabled tools should add no rules:\n%s", got)
+	}
+	web, browser := Optional(true, false), Optional(false, true)
+	if !strings.Contains(web, "web_fetch") || strings.Contains(web, "refs from") || !strings.Contains(web, "untrusted") {
+		t.Fatalf("web rules wrong:\n%s", web)
+	}
+	if !strings.Contains(browser, "refs from") || strings.Contains(browser, "web_fetch") || !strings.Contains(browser, "untrusted") {
+		t.Fatalf("browser rules wrong:\n%s", browser)
 	}
 }

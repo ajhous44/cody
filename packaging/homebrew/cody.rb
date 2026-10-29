@@ -8,7 +8,7 @@
 class Cody < Formula
   desc "A small coding agent for the terminal"
   homepage "https://github.com/ajhous44/cody"
-  url "https://github.com/ajhous44/cody/archive/refs/tags/v0.1.0.tar.gz"
+  url "https://github.com/ajhous44/cody/archive/refs/tags/v3.0.0.tar.gz"
   sha256 "REPLACE_WITH_TARBALL_SHA256"
   license "MIT"
   head "https://github.com/ajhous44/cody.git", branch: "main"
@@ -16,7 +16,7 @@ class Cody < Formula
   depends_on "go" => :build
 
   def install
-    ldflags = "-s -w -X github.com/ajhous44/cody/internal/cli.Version=#{version}"
+    ldflags = "-s -w -X github.com/ajhous44/cody/v3/internal/cli.Version=#{version}"
     system "go", "build", *std_go_args(ldflags: ldflags), "."
   end
 

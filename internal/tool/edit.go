@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"os"
 	"strings"
 )
 
@@ -24,7 +23,7 @@ func (e *Edit) Mutating() bool { return true }
 func (e *Edit) Schema() json.RawMessage {
 	return objectSchema(map[string]any{
 		"path":        property("string", "File path relative to the workspace root."),
-		"old_string":  property("string", "Exact text to replace."),
+		"old_string":  property("string", "Exact file text to replace. Exclude line numbers and the tab separator added by the read tool."),
 		"new_string":  property("string", "Replacement text."),
 		"replace_all": property("boolean", "Replace every occurrence. Default false."),
 	}, "path", "old_string", "new_string")
@@ -54,11 +53,12 @@ func (e *Edit) Run(ctx context.Context, args json.RawMessage) (string, error) {
 	if a.OldString == a.NewString {
 		return "", errors.New("old_string and new_string are identical")
 	}
-	abs, err := Resolve(e.root, a.Path)
+	dir, rel, err := OpenWritable(e.root, a.Path)
 	if err != nil {
 		return "", err
 	}
-	data, err := os.ReadFile(abs)
+	defer dir.Close()
+	data, err := dir.ReadFile(rel)
 	if err != nil {
 		return "", err
 	}
@@ -66,7 +66,7 @@ func (e *Edit) Run(ctx context.Context, args json.RawMessage) (string, error) {
 	count := strings.Count(content, a.OldString)
 	switch {
 	case count == 0:
-		return "", fmt.Errorf("old_string not found in %s (re-read the file and copy the exact text, including whitespace)", a.Path)
+		return "", fmt.Errorf("old_string not found in %s (re-read the file; copy exact file text and whitespace, without read's line-number prefix)", a.Path)
 	case count > 1 && !a.ReplaceAll:
 		return "", fmt.Errorf("old_string matches %d times in %s; add more context or set replace_all", count, a.Path)
 	}
@@ -74,11 +74,11 @@ func (e *Edit) Run(ctx context.Context, args json.RawMessage) (string, error) {
 	if a.ReplaceAll {
 		updated = strings.ReplaceAll(content, a.OldString, a.NewString)
 	}
-	info, err := os.Stat(abs)
+	info, err := dir.Stat(rel)
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(abs, []byte(updated), info.Mode().Perm()); err != nil {
+	if err := dir.WriteFile(rel, []byte(updated), info.Mode().Perm()); err != nil {
 		return "", err
 	}
 	removed := strings.Count(a.OldString, "\n") + 1

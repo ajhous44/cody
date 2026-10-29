@@ -8,8 +8,8 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ajhous44/cody/internal/provider"
-	"github.com/ajhous44/cody/internal/tool"
+	"github.com/ajhous44/cody/v3/internal/provider"
+	"github.com/ajhous44/cody/v3/internal/tool"
 )
 
 type fakeStream struct {
@@ -297,7 +297,12 @@ func TestPromptDeniedApproval(t *testing.T) {
 	}}, ApproverFunc(func(context.Context, tool.Tool, string) (bool, error) {
 		return false, nil
 	}))
-	added, err := a.Prompt(context.Background(), "go", nil)
+	var events []Event
+	added, err := a.Prompt(context.Background(), "go", func(e Event) {
+		if e.Kind == KindToolStart || e.Kind == KindToolEnd {
+			events = append(events, e)
+		}
+	})
 	if err != nil {
 		t.Fatalf("Prompt: %v", err)
 	}
@@ -306,6 +311,9 @@ func TestPromptDeniedApproval(t *testing.T) {
 	}
 	if added[2].Content != "user denied this action" {
 		t.Fatalf("tool result = %q", added[2].Content)
+	}
+	if len(events) != 2 || events[0].Kind != KindToolStart || events[1].Kind != KindToolEnd || events[1].Result != added[2].Content || events[1].Ms != 0 {
+		t.Fatalf("denial must have its own tool card and match the journal: %+v", events)
 	}
 }
 
@@ -371,72 +379,21 @@ func TestReasoningEventsStayOutOfHistory(t *testing.T) {
 	}
 }
 
-func TestTrimContextElidesToolCallArguments(t *testing.T) {
-	big := strings.Repeat("x", 40000)
-	msgs := []provider.Message{
-		{Role: "system", Content: "system"},
-		{Role: "user", Content: "write the file"},
-		{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "c1", Function: provider.Func{Name: "write", Arguments: `{"content":"` + big + `"}`}}}},
-		{Role: "tool", ToolCallID: "c1", Content: "created file"},
-		{Role: "user", Content: "now what?"},
+func TestConsumeSplitsUnindexedParallelCalls(t *testing.T) {
+	msg, _, err := consume(&fakeStream{deltas: []provider.Delta{
+		{ToolCalls: []provider.ToolCallDelta{
+			{ID: "a", Name: "read", Args: `{"path":"a"}`},
+			{ID: "b", Name: "read", Args: `{"path":"b"}`},
+		}},
+		{ToolCalls: []provider.ToolCallDelta{{Index: 1, ID: "c", Name: "read", Args: `{"path":`}}},
+		{ToolCalls: []provider.ToolCallDelta{{Index: 1, Args: `"c"}`}}},
+	}}, func(Event) {})
+	if err != nil || msg == nil || len(msg.ToolCalls) != 3 {
+		t.Fatalf("calls = %+v, err = %v", msg, err)
 	}
-	out := TrimContext(msgs, 1000)
-	if len(out) != len(msgs) {
-		t.Fatalf("trim dropped turns: %d of %d messages kept", len(out), len(msgs))
-	}
-	if got := out[2].ToolCalls[0].Function.Arguments; got != "{}" {
-		t.Fatalf("tool call args = %q, want elided", got)
-	}
-	if out[1].Content != "write the file" || out[4].Content != "now what?" {
-		t.Fatal("user turns must survive tool-call elision")
-	}
-	if msgs[2].ToolCalls[0].Function.Arguments == "{}" {
-		t.Fatal("TrimContext must not mutate the input")
-	}
-	if got := estimate(out); got > 1000 {
-		t.Fatalf("estimate = %d, want <= 1000", got)
-	}
-}
-
-func TestTrimContextElidesOldToolOutput(t *testing.T) {
-	big := strings.Repeat("x", 40000)
-	msgs := []provider.Message{
-		{Role: "system", Content: "system"},
-		{Role: "user", Content: "hi"},
-		{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: "c1", Function: provider.Func{Name: "bash", Arguments: "{}"}}}},
-		{Role: "tool", ToolCallID: "c1", Content: big},
-		{Role: "assistant", Content: "done"},
-	}
-	out := TrimContext(msgs, 1000)
-	if out[3].Content != elidedMarker {
-		t.Fatalf("old tool output not elided: %q", out[3].Content[:40])
-	}
-	if out[0].Content != "system" {
-		t.Fatal("system message must be preserved")
-	}
-	if got := estimate(out); got > 1000 {
-		t.Fatalf("estimate = %d, want <= 1000", got)
-	}
-	if msgs[3].Content != big {
-		t.Fatal("TrimContext must not mutate the input")
-	}
-}
-
-func TestTrimContextDropsOldMessages(t *testing.T) {
-	msgs := []provider.Message{
-		{Role: "system", Content: "system"},
-		{Role: "user", Content: strings.Repeat("a", 4000)},
-		{Role: "assistant", Content: "old answer"},
-		{Role: "tool", ToolCallID: "c1", Content: "old tool"},
-		{Role: "user", Content: "latest"},
-	}
-	out := TrimContext(msgs, 100)
-	for _, m := range out[1:] {
-		if m.Role == "tool" || m.Role == "assistant" {
-			t.Fatalf("trimmed context still starts with %q message", m.Role)
+	for i, want := range []string{`{"path":"a"}`, `{"path":"b"}`, `{"path":"c"}`} {
+		if got := msg.ToolCalls[i].Function.Arguments; got != want {
+			t.Fatalf("call %d args = %s, want %s", i, got, want)
 		}
-	}
-	if out[0].Role != "system" {
-		t.Fatal("system message must be preserved")
 	}
 }

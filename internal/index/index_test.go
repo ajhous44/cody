@@ -2,6 +2,7 @@ package index
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -77,7 +78,7 @@ func TestIndexIncrementalLifecycle(t *testing.T) {
 		t.Fatalf("reindex stats = %+v", stats)
 	}
 
-	hits, err := Search(ctx, dbPath, e, "Alpha", 5)
+	hits, err := Search(ctx, dbPath, e, "", "Alpha", 5)
 	if err != nil {
 		t.Fatalf("Search: %v", err)
 	}
@@ -109,7 +110,7 @@ func TestIndexIncrementalLifecycle(t *testing.T) {
 	if stats.Removed != 1 {
 		t.Fatalf("removed = %d, want 1", stats.Removed)
 	}
-	hits, err = Search(ctx, dbPath, e, "Beta", 5)
+	hits, err = Search(ctx, dbPath, e, "", "Beta", 5)
 	if err != nil {
 		t.Fatalf("Search after delete: %v", err)
 	}
@@ -199,7 +200,7 @@ func TestIndexModelMismatch(t *testing.T) {
 }
 
 func TestSearchWithoutIndex(t *testing.T) {
-	_, err := Search(context.Background(), filepath.Join(t.TempDir(), "missing.db"), fakeEmbed{}, "q", 3)
+	_, err := Search(context.Background(), filepath.Join(t.TempDir(), "missing.db"), fakeEmbed{}, "", "q", 3)
 	if err == nil || !strings.Contains(err.Error(), "not indexed") {
 		t.Fatalf("err = %v", err)
 	}
@@ -211,5 +212,69 @@ func TestSkipDirsAndExtensions(t *testing.T) {
 	}
 	if skipDir("src") {
 		t.Fatal("source dirs must be indexed")
+	}
+}
+
+func TestIndexFileRejectsReplacedSymlink(t *testing.T) {
+	root, outside := t.TempDir(), t.TempDir()
+	if err := os.WriteFile(filepath.Join(outside, "secret.txt"), []byte("private contents"), 0600); err != nil {
+		t.Fatal(err)
+	}
+	if err := os.Symlink(filepath.Join(outside, "secret.txt"), filepath.Join(root, "changed.txt")); err != nil {
+		t.Fatal(err)
+	}
+	// The path may have changed after the directory walk. It must be rejected before DB or embedding work.
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer dir.Close()
+	f, err := prepareFile(nil, dir, "changed.txt", 16, 0, Options{})
+	if err != nil || f != nil {
+		t.Fatalf("outside symlink was indexed: file=%v, err=%v", f, err)
+	}
+}
+
+func TestSearchRefusesIndexFromAnotherEmbeddingModel(t *testing.T) {
+	dir := t.TempDir()
+	if err := os.WriteFile(filepath.Join(dir, "a.go"), []byte("package a // alpha\n"), 0o644); err != nil {
+		t.Fatal(err)
+	}
+	dbPath := filepath.Join(t.TempDir(), "index.db")
+	if _, err := Index(context.Background(), dir, dbPath, fakeEmbed{}, Options{Model: "nomic-embed-text"}); err != nil {
+		t.Fatal(err)
+	}
+	if _, err := Search(context.Background(), dbPath, fakeEmbed{}, "nomic-embed-text", "alpha", 3); err != nil {
+		t.Fatalf("matching model rejected: %v", err)
+	}
+	_, err := Search(context.Background(), dbPath, fakeEmbed{}, "openrouter:openai/text-embedding-3-small", "alpha", 3)
+	if err == nil || !strings.Contains(err.Error(), "--rebuild") {
+		t.Fatalf("mixed vector spaces allowed: %v", err)
+	}
+}
+
+type countingEmbed struct{ calls *int }
+
+func (c countingEmbed) Embed(ctx context.Context, texts []string) ([][]float32, error) {
+	*c.calls++
+	return fakeEmbed{}.Embed(ctx, texts)
+}
+
+// Small files share embed requests: round trips, not tokens, dominate hosted
+// embedding time.
+func TestIndexBatchesChunksAcrossFiles(t *testing.T) {
+	dir := t.TempDir()
+	for i := range 40 {
+		if err := os.WriteFile(filepath.Join(dir, fmt.Sprintf("f%02d.go", i)), []byte(fmt.Sprintf("package f // word%d\n", i)), 0o644); err != nil {
+			t.Fatal(err)
+		}
+	}
+	calls := 0
+	stats, err := Index(context.Background(), dir, filepath.Join(t.TempDir(), "index.db"), countingEmbed{&calls}, Options{Batch: 16})
+	if err != nil || stats.Files != 40 || stats.Embedded != 40 {
+		t.Fatalf("stats %+v err %v", stats, err)
+	}
+	if calls != 3 {
+		t.Fatalf("40 one-chunk files at batch 16 took %d embed calls, want 3", calls)
 	}
 }

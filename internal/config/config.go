@@ -7,6 +7,7 @@ import (
 	"io/fs"
 	"os"
 	"path/filepath"
+	"strconv"
 	"strings"
 )
 
@@ -14,6 +15,9 @@ const (
 	DefaultOllamaURL     = "http://localhost:11434/v1"
 	DefaultOpenRouterURL = "https://openrouter.ai/api/v1"
 	DefaultEmbedModel    = "nomic-embed-text"
+	// DefaultOpenRouterEmbedModel is used when embed_provider is openrouter
+	// and embed_model is still the local default.
+	DefaultOpenRouterEmbedModel = "openai/text-embedding-3-small"
 )
 
 type Provider struct {
@@ -22,14 +26,22 @@ type Provider struct {
 }
 
 type Config struct {
-	Provider   string              `json:"provider"`
-	Model      string              `json:"model"`
-	Approval   string              `json:"approval"`
-	EmbedModel string              `json:"embed_model"`
-	Providers  map[string]Provider `json:"providers"`
+	Provider       string              `json:"provider"`
+	Model          string              `json:"model"`
+	Approval       string              `json:"approval"`
+	EmbedModel     string              `json:"embed_model"`
+	EmbedProvider  string              `json:"embed_provider"`
+	Providers      map[string]Provider `json:"providers"`
+	WebEnabled     bool                `json:"web_enabled,omitempty"`
+	BrowserEnabled bool                `json:"browser_enabled,omitempty"`
+	BraveSearchKey string              `json:"brave_search_key,omitempty"`
+	Debug          bool                `json:"debug,omitempty"`
 }
 
 func Dir() string {
+	if dir := os.Getenv("CODY_CONFIG_DIR"); dir != "" {
+		return dir
+	}
 	home, err := os.UserHomeDir()
 	if err != nil {
 		return ".cody"
@@ -41,9 +53,10 @@ func Path() string { return filepath.Join(Dir(), "config.json") }
 
 func Default() *Config {
 	return &Config{
-		Provider:   "ollama",
-		Approval:   "ask",
-		EmbedModel: DefaultEmbedModel,
+		Provider:      "ollama",
+		Approval:      "ask",
+		EmbedModel:    DefaultEmbedModel,
+		EmbedProvider: "ollama",
 		Providers: map[string]Provider{
 			"ollama":     {BaseURL: DefaultOllamaURL},
 			"openrouter": {BaseURL: DefaultOpenRouterURL},
@@ -51,7 +64,20 @@ func Default() *Config {
 	}
 }
 
+// Load returns the saved settings with environment overrides applied.
 func Load() (*Config, error) {
+	c, err := LoadFile()
+	if err != nil {
+		return nil, err
+	}
+	c.applyEnv()
+	c.normalize()
+	return c, nil
+}
+
+// LoadFile returns only the saved settings. Edit and Save this, not Load's
+// result, so environment overrides and env-provided keys never reach disk.
+func LoadFile() (*Config, error) {
 	c := Default()
 	b, err := os.ReadFile(Path())
 	if err == nil {
@@ -61,12 +87,20 @@ func Load() (*Config, error) {
 	} else if !errors.Is(err, fs.ErrNotExist) {
 		return nil, err
 	}
-	c.applyEnv()
 	c.normalize()
 	return c, nil
 }
 
 func (c *Config) applyEnv() {
+	if v, err := strconv.ParseBool(os.Getenv("CODY_WEB")); err == nil {
+		c.WebEnabled = v
+	}
+	if v, err := strconv.ParseBool(os.Getenv("CODY_BROWSER")); err == nil {
+		c.BrowserEnabled = v
+	}
+	if v, err := strconv.ParseBool(os.Getenv("CODY_DEBUG")); err == nil {
+		c.Debug = v
+	}
 	if v := os.Getenv("CODY_PROVIDER"); v != "" {
 		c.Provider = v
 	}
@@ -75,6 +109,9 @@ func (c *Config) applyEnv() {
 	}
 	if v := os.Getenv("CODY_APPROVAL"); v != "" {
 		c.Approval = v
+	}
+	if v := os.Getenv("CODY_EMBED_PROVIDER"); v != "" {
+		c.EmbedProvider = v
 	}
 	if host := os.Getenv("OLLAMA_HOST"); host != "" && host != "http://localhost:11434" && host != "http://127.0.0.1:11434" {
 		p := c.provider("ollama")
@@ -93,6 +130,13 @@ func (c *Config) applyEnv() {
 	}
 }
 
+func (c *Config) SearchKey() string {
+	if key := os.Getenv("BRAVE_SEARCH_API_KEY"); key != "" {
+		return key
+	}
+	return c.BraveSearchKey
+}
+
 func (c *Config) normalize() {
 	c.Provider = strings.ToLower(strings.TrimSpace(c.Provider))
 	if c.Provider == "" {
@@ -106,6 +150,11 @@ func (c *Config) normalize() {
 	if strings.TrimSpace(c.EmbedModel) == "" {
 		c.EmbedModel = DefaultEmbedModel
 	}
+	// Anything but an explicit "openrouter" stays local: indexing to a hosted
+	// provider uploads every indexed file, so it is never a fallback.
+	if c.EmbedProvider = strings.ToLower(strings.TrimSpace(c.EmbedProvider)); c.EmbedProvider != "openrouter" {
+		c.EmbedProvider = "ollama"
+	}
 	if c.Providers == nil {
 		c.Providers = map[string]Provider{}
 	}
@@ -116,6 +165,14 @@ func (c *Config) normalize() {
 		}
 		c.Providers[name] = cur
 	}
+}
+
+// Embedding returns where index embeddings are computed and with which model.
+func (c *Config) Embedding() (provider, model string) {
+	if c.EmbedProvider == "openrouter" && c.EmbedModel == DefaultEmbedModel {
+		return c.EmbedProvider, DefaultOpenRouterEmbedModel
+	}
+	return c.EmbedProvider, c.EmbedModel
 }
 
 func (c *Config) provider(name string) Provider {
@@ -135,4 +192,34 @@ func (c *Config) Key(name string) string {
 		return key
 	}
 	return os.Getenv("CODY_API_KEY")
+}
+
+// Save writes the config to disk with owner-only permissions. Keys stay on
+// this machine; nothing here is ever sent anywhere by cody itself.
+func Save(c *Config) error {
+	if err := os.MkdirAll(Dir(), 0o700); err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(c, "", "  ")
+	if err != nil {
+		return err
+	}
+	tmp := Path() + ".tmp"
+	if err := os.WriteFile(tmp, append(b, '\n'), 0o600); err != nil {
+		return err
+	}
+	return os.Rename(tmp, Path())
+}
+
+// Clone gives each engine its own configuration snapshot.
+func (c *Config) Clone() *Config {
+	if c == nil {
+		return nil
+	}
+	out := *c
+	out.Providers = make(map[string]Provider, len(c.Providers))
+	for name, p := range c.Providers {
+		out.Providers[name] = p
+	}
+	return &out
 }

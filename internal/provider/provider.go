@@ -3,6 +3,7 @@ package provider
 import (
 	"context"
 	"encoding/json"
+	"time"
 )
 
 type Message struct {
@@ -36,15 +37,24 @@ type FuncSpec struct {
 }
 
 type Request struct {
-	Model    string
-	Messages []Message
-	Tools    []ToolSpec
+	CacheKey        string
+	MaxOutputTokens int
+	OnRetry         func(time.Duration)
+	Model           string
+	Messages        []Message
+	Tools           []ToolSpec
 }
 
 type Usage struct {
-	PromptTokens     int `json:"prompt_tokens"`
-	CompletionTokens int `json:"completion_tokens"`
-	TotalTokens      int `json:"total_tokens"`
+	PromptTokens     int                 `json:"prompt_tokens"`
+	CompletionTokens int                 `json:"completion_tokens"`
+	TotalTokens      int                 `json:"total_tokens"`
+	PromptDetails    *PromptTokenDetails `json:"prompt_tokens_details,omitempty"`
+}
+
+type PromptTokenDetails struct {
+	CachedTokens     int `json:"cached_tokens"`
+	CacheWriteTokens int `json:"cache_write_tokens"`
 }
 
 type ToolCallDelta struct {

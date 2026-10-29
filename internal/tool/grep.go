@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"os"
 	"path/filepath"
 	"regexp"
 	"strings"
@@ -75,11 +74,14 @@ func (g *Grep) Run(ctx context.Context, args json.RawMessage) (string, error) {
 	if target == "" {
 		target = "."
 	}
-	base, err := Resolve(g.root, target)
+	dir, base, err := OpenWorkspace(g.root, target)
 	if err != nil {
 		return "", err
 	}
-	info, err := os.Stat(base)
+	defer dir.Close()
+	files := dir.FS()
+	base = filepath.ToSlash(base)
+	info, err := fs.Stat(files, base)
 	if err != nil {
 		return "", err
 	}
@@ -97,35 +99,18 @@ func (g *Grep) Run(ctx context.Context, args json.RawMessage) (string, error) {
 
 	state := grepState{limit: limit}
 	if info.IsDir() {
-		err = filepath.WalkDir(base, func(p string, d fs.DirEntry, err error) error {
-			if err != nil {
-				return nil
-			}
-			if ctx.Err() != nil {
-				return ctx.Err()
-			}
-			if d.IsDir() {
-				if p != base && skipSearchDir(d.Name()) {
-					return fs.SkipDir
-				}
-				return nil
-			}
-			rel, err := filepath.Rel(g.root, p)
-			if err != nil {
-				return nil
-			}
+		err = walkSearch(ctx, g.root, base, func(rel string) error {
 			if includeRe != nil && !matchGlob(includeRe, a.Include, rel) {
 				return nil
 			}
-			grepFile(rel, p, re, &state)
+			grepFile(files, rel, re, &state)
 			if state.full() {
 				return fs.SkipAll
 			}
 			return nil
 		})
 	} else {
-		rel, _ := filepath.Rel(g.root, base)
-		grepFile(filepath.ToSlash(rel), base, re, &state)
+		grepFile(files, base, re, &state)
 	}
 	if err != nil {
 		return "", err
@@ -151,12 +136,12 @@ func (s *grepState) full() bool {
 	return s.matches >= s.limit || s.b.Len() >= grepMaxOutput
 }
 
-func grepFile(rel, abs string, re *regexp.Regexp, state *grepState) {
-	info, err := os.Stat(abs)
-	if err != nil || info.Size() > grepMaxFileBytes {
+func grepFile(files fs.FS, rel string, re *regexp.Regexp, state *grepState) {
+	info, err := fs.Stat(files, rel)
+	if err != nil || !info.Mode().IsRegular() || info.Size() > grepMaxFileBytes {
 		return
 	}
-	data, err := os.ReadFile(abs)
+	data, err := fs.ReadFile(files, rel)
 	if err != nil || bytes.IndexByte(data, 0) >= 0 {
 		return
 	}

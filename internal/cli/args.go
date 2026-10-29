@@ -19,11 +19,13 @@ type options struct {
 	list         bool
 	keep         bool
 	open         bool
+	watchStdin   bool
 	showThinking bool
 	rebuild      bool
 	runs         int
 	task         string
 	allowHome    bool
+	debug        *bool
 }
 
 var commands = map[string]bool{
@@ -59,6 +61,8 @@ func parseArgs(args []string) (options, error) {
 			o.keep = true
 		case a == "--open":
 			o.open = true
+		case a == "--watch-stdin":
+			o.watchStdin = true
 		case a == "--yolo":
 			o.approval = "yolo"
 		case a == "--allow-home":
@@ -67,6 +71,15 @@ func parseArgs(args []string) (options, error) {
 			o.showThinking = true
 		case a == "--rebuild":
 			o.rebuild = true
+		case a == "--debug" || strings.HasPrefix(a, "--debug="):
+			v := true
+			if s, ok := strings.CutPrefix(a, "--debug="); ok {
+				var err error
+				if v, err = strconv.ParseBool(s); err != nil {
+					return o, fmt.Errorf("--debug must be true or false")
+				}
+			}
+			o.debug = &v
 		case a == "-m" || a == "--model":
 			v, err := need(a)
 			if err != nil {

@@ -2,8 +2,11 @@ package tool
 
 import (
 	"context"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"reflect"
+	"runtime"
 	"strings"
 	"testing"
 )
@@ -30,6 +33,31 @@ func TestResolveRejectsEscape(t *testing.T) {
 	}
 	if !strings.HasPrefix(got, root) {
 		t.Fatalf("resolved outside root: %s", got)
+	}
+}
+
+func TestReadPathAlias(t *testing.T) {
+	root := t.TempDir()
+	writeFixture(t, root, "a.txt", "one\ntwo\nthree\n")
+	r := NewRead(root)
+	for _, args := range []string{
+		`{"path":"a.txt","offset":2,"limit":1}`,
+		`{"filePath":"a.txt","offset":2,"limit":1}`,
+		`{"path":"a.txt","filePath":"a.txt","offset":2,"limit":1}`,
+		`{"path":"","filePath":"a.txt","offset":2,"limit":1}`,
+	} {
+		out, err := r.Run(context.Background(), []byte(args))
+		if err != nil || !strings.Contains(out, "2\ttwo") || strings.Contains(out, "1\tone") || strings.Contains(out, "3\tthree") {
+			t.Fatalf("alias/range: %q, %v", out, err)
+		}
+		if r.Summarize([]byte(args)) != "a.txt" {
+			t.Fatal("summary did not resolve alias")
+		}
+	}
+	for _, args := range []string{`{}`, `{"filePath":"../outside.txt"}`, `{"filePath":42}`, `{"path":"a.txt","filePath":"other.txt"}`} {
+		if _, err := r.Run(context.Background(), []byte(args)); err == nil {
+			t.Fatalf("accepted invalid or unsafe arguments: %s", args)
+		}
 	}
 }
 
@@ -125,7 +153,12 @@ func TestBashCapturesExitCode(t *testing.T) {
 }
 
 func TestBashOutputCap(t *testing.T) {
-	out, err := NewBash(t.TempDir()).Run(context.Background(), []byte(`{"command":"yes | head -c 100000"}`))
+	command := "yes | head -c 100000"
+	if runtime.GOOS == "windows" {
+		command = "Write-Output ('x' * 100000)"
+	}
+	args, _ := json.Marshal(map[string]string{"command": command})
+	out, err := NewBash(t.TempDir()).Run(context.Background(), args)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -144,5 +177,17 @@ func TestBashTimeout(t *testing.T) {
 	}
 	if !strings.Contains(out, "timed out") {
 		t.Fatalf("out = %q", out)
+	}
+}
+
+func TestRegistrySpecsCached(t *testing.T) {
+	root := t.TempDir()
+	r := NewRegistry(NewRead(root), NewBash(root))
+	first, second := r.Specs(), r.Specs()
+	if len(first) != 2 || !reflect.DeepEqual(first, second) {
+		t.Fatalf("specs not stable: %+v vs %+v", first, second)
+	}
+	if first[0].Function.Name != "read" || first[1].Function.Name != "bash" {
+		t.Fatalf("spec order or names wrong: %+v", first)
 	}
 }

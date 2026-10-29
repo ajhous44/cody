@@ -10,9 +10,10 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
-	"github.com/ajhous44/cody/internal/agent"
-	"github.com/ajhous44/cody/internal/tool"
+	"github.com/ajhous44/cody/v3/internal/agent"
+	"github.com/ajhous44/cody/v3/internal/tool"
 )
 
 type UI struct {
@@ -73,46 +74,9 @@ func (u *UI) Bold(s string) string { return u.paint(bold, s) }
 func (u *UI) Printf(format string, args ...any) { fmt.Fprintf(u.out, format, args...) }
 func (u *UI) Errorf(format string, args ...any) { fmt.Fprintf(u.errOut, format, args...) }
 
+// Banner is one dim line: the transcript starts on the next screen row.
 func (u *UI) Banner(version, providerName, model, root, sessionID string) {
-	if u.color {
-		u.printArt(version, providerName, model, root, sessionID)
-		return
-	}
-	u.Printf("cody %s  %s/%s\n", version, providerName, model)
-	u.Printf("%s\n", root)
-	u.Printf("session %s  (/help for commands)\n\n", sessionID)
-}
-
-var robotArt = []string{
-	"  ▄▄▄▄▄▄▄▄▄▄▄▄▄  ",
-	"  █   ●   ●   █  ",
-	"  █     ▽     █  ",
-	"  █▄▄▄▄▄▄▄▄▄▄▄█  ",
-	"    ▐███████▌    ",
-	"    ▐█     █▌    ",
-}
-
-var wordArt = []string{
-	"            _       ",
-	"   ___ ___ | |_   _ ",
-	"  / __/ _ \\| | | | |",
-	" | (_| (_) | | |_| |",
-	"  \\___\\___/|_|\\__, |",
-	"              |___/ ",
-}
-
-func (u *UI) printArt(version, providerName, model, root, sessionID string) {
-	for i := range robotArt {
-		right := ""
-		if i < len(wordArt) {
-			right = wordArt[i]
-		}
-		u.Printf("%s   %s\n", u.paint(cyan, robotArt[i]), u.paint(bold, right))
-	}
-	u.Printf("\n")
-	u.Printf("  %s\n", u.paint(dim, "cody "+version+"  ·  "+providerName+"/"+model))
-	u.Printf("  %s\n", u.paint(dim, root))
-	u.Printf("  %s\n\n", u.paint(dim, "session "+sessionID+"  ·  /help for commands  ·  ctrl-c interrupts"))
+	u.Printf("%s\n\n", u.Dim(fmt.Sprintf("cody %s  %s/%s  %s  session %s  /help", version, providerName, model, root, sessionID)))
 }
 
 func (u *UI) SetThinkingVisible(on bool) { u.showThinking = on }
@@ -139,6 +103,11 @@ func (u *UI) reasoning(s string) {
 
 func (u *UI) Event(e agent.Event) {
 	if e.Kind == agent.KindThinking {
+		if e.Text != "" {
+			u.StopThinking()
+			u.breakLine()
+			u.Printf("%s\n", u.Dim(e.Text))
+		}
 		u.StartThinking()
 		return
 	}
@@ -177,7 +146,11 @@ func (u *UI) Event(e agent.Event) {
 		}
 	case agent.KindUsage:
 		if e.Usage != nil {
-			u.Printf("%s\n", u.paint(dim, fmt.Sprintf("  tokens in/out %d/%d", e.Usage.PromptTokens, e.Usage.CompletionTokens)))
+			text := fmt.Sprintf("  tokens in/out %d/%d", e.Usage.PromptTokens, e.Usage.CompletionTokens)
+			if d := e.Usage.PromptDetails; d != nil {
+				text += fmt.Sprintf(" · cache read/write %d/%d", d.CachedTokens, d.CacheWriteTokens)
+			}
+			u.Printf("%s\n", u.paint(dim, text))
 		}
 	case agent.KindNotice:
 		u.breakLine()
@@ -388,6 +361,9 @@ func normalizeSpace(s string) string {
 func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
+	}
+	for max > 0 && !utf8.RuneStart(s[max]) {
+		max--
 	}
 	return s[:max] + "..."
 }

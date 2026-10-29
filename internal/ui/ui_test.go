@@ -8,8 +8,8 @@ import (
 	"testing"
 	"time"
 
-	"github.com/ajhous44/cody/internal/agent"
-	"github.com/ajhous44/cody/internal/tool"
+	"github.com/ajhous44/cody/v3/internal/agent"
+	"github.com/ajhous44/cody/v3/internal/tool"
 )
 
 type fakeTool struct{}
@@ -76,6 +76,16 @@ func TestApproveRendersSummary(t *testing.T) {
 	}
 	if strings.Contains(got, `{"command"`) {
 		t.Fatalf("raw JSON leaked:\n%s", got)
+	}
+}
+
+func TestLoadingStatus(t *testing.T) {
+	var out bytes.Buffer
+	u := New(strings.NewReader(""), &out, &out)
+	u.Event(agent.Event{Kind: agent.KindThinking, Text: "Loading model… local"})
+	u.Event(agent.Event{Kind: agent.KindThinking})
+	if got := out.String(); got != "Loading model… local\n" {
+		t.Fatalf("loading status = %q", got)
 	}
 }
 
@@ -225,22 +235,19 @@ func TestBannerCompactWhenNotTerminal(t *testing.T) {
 	}
 }
 
-func TestBannerArtWhenColor(t *testing.T) {
+func TestBannerIsOneDimLineWhenColor(t *testing.T) {
 	var out, errOut bytes.Buffer
 	u := New(strings.NewReader(""), &out, &errOut)
 	u.color = true
 	u.Banner("0.1.0", "ollama", "gemma4:e4b", "/tmp/project", "20260101-000000-abcd")
 	got := out.String()
-	if !strings.Contains(got, "▄▄▄") {
-		t.Fatalf("art banner missing robot:\n%s", got)
+	if strings.Count(strings.TrimRight(got, "\n"), "\n") != 0 || !strings.Contains(got, dim+"cody 0.1.0  ollama/gemma4:e4b") {
+		t.Fatalf("banner should be one dim line:\n%q", got)
 	}
-	if !strings.Contains(got, "cody 0.1.0") {
-		t.Fatalf("art banner missing version line:\n%s", got)
-	}
-	if !strings.Contains(got, "ollama/gemma4:e4b") {
-		t.Fatalf("art banner missing model:\n%s", got)
-	}
-	if !strings.Contains(got, "\x1b[") {
-		t.Fatalf("expected ANSI color codes:\n%s", got)
+}
+
+func TestTruncateKeepsRunesWhole(t *testing.T) {
+	if got := truncate("ab→cd", 3); got != "ab..." {
+		t.Fatalf("truncate split a rune: %q", got)
 	}
 }

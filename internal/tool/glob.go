@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"io/fs"
 	"path"
 	"path/filepath"
 	"regexp"
@@ -104,23 +103,7 @@ func (g *Glob) Run(ctx context.Context, args json.RawMessage) (string, error) {
 	}
 	re := globRegexp(a.Pattern)
 	var matches []string
-	err := filepath.WalkDir(g.root, func(p string, d fs.DirEntry, err error) error {
-		if err != nil {
-			return nil
-		}
-		if ctx.Err() != nil {
-			return ctx.Err()
-		}
-		if d.IsDir() {
-			if p != g.root && skipSearchDir(d.Name()) {
-				return fs.SkipDir
-			}
-			return nil
-		}
-		rel, err := filepath.Rel(g.root, p)
-		if err != nil {
-			return nil
-		}
+	err := walkSearch(ctx, g.root, ".", func(rel string) error {
 		if matchGlob(re, a.Pattern, rel) {
 			matches = append(matches, filepath.ToSlash(rel))
 		}

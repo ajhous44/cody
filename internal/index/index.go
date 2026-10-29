@@ -17,7 +17,7 @@ import (
 
 	_ "modernc.org/sqlite"
 
-	"github.com/ajhous44/cody/internal/config"
+	"github.com/ajhous44/cody/v3/internal/config"
 )
 
 // Embedder turns text into vectors. Implementations must return exactly one
@@ -109,25 +109,37 @@ func Index(ctx context.Context, root, dbPath string, e Embedder, opts Options) (
 		return stats, err
 	}
 
+	dir, err := os.OpenRoot(root)
+	if err != nil {
+		return stats, err
+	}
+	defer dir.Close()
 	seen := map[string]bool{}
+	var pending []*pendingFile
+	queued := 0
 	err = eachFile(root, opts.MaxFileBytes, func(rel string, size, mtime int64) error {
 		if err := ctx.Err(); err != nil {
 			return err
 		}
 		seen[rel] = true
-		changed, err := indexFile(ctx, db, root, rel, size, mtime, e, opts, &stats)
+		f, err := prepareFile(db, dir, rel, size, mtime, opts)
 		if err != nil {
 			return err
 		}
-		if changed {
-			if opts.Progress != nil {
-				opts.Progress(rel)
-			}
-		} else {
+		if f == nil {
 			stats.Unchanged++
+			return nil
 		}
-		return nil
+		pending = append(pending, f)
+		if queued += len(f.chunks); queued >= opts.Batch {
+			err = flushPending(ctx, db, pending, e, opts, &stats)
+			pending, queued = pending[:0], 0
+		}
+		return err
 	})
+	if err == nil {
+		err = flushPending(ctx, db, pending, e, opts, &stats)
+	}
 	if err != nil {
 		return stats, err
 	}
@@ -224,17 +236,23 @@ func eachFile(root string, maxBytes int64, fn func(rel string, size, mtime int64
 		if err != nil {
 			return nil
 		}
-		return fn(rel, info.Size(), info.ModTime().Unix())
+		return fn(rel, info.Size(), info.ModTime().UnixNano())
 	})
 }
 
-func indexFile(ctx context.Context, db *sql.DB, root, rel string, size, mtime int64, e Embedder, opts Options, stats *Stats) (bool, error) {
-	data, err := os.ReadFile(filepath.Join(root, rel))
+// pendingFile is a changed file whose chunks wait for a shared embed batch.
+type pendingFile struct {
+	rel, hash   string
+	size, mtime int64
+	chunks      []Chunk
+}
+
+// prepareFile reads and chunks a changed file. It returns nil when the file is
+// unreadable or its content is already indexed.
+func prepareFile(db *sql.DB, dir *os.Root, rel string, size, mtime int64, opts Options) (*pendingFile, error) {
+	data, err := dir.ReadFile(rel)
 	if err != nil {
-		return false, nil
-	}
-	if hasBinaryByte(data) {
-		return false, nil
+		return nil, nil
 	}
 	sum := sha256.Sum256(data)
 	hash := hex.EncodeToString(sum[:])
@@ -243,65 +261,83 @@ func indexFile(ctx context.Context, db *sql.DB, root, rel string, size, mtime in
 	if old == hash {
 		// Content is current; refresh metadata so a touched file is not
 		// reported as drift forever.
-		if _, err := db.Exec(`UPDATE files SET size = ?, mtime = ? WHERE path = ?`, size, mtime, rel); err != nil {
-			return false, err
-		}
-		return false, nil
+		_, err := db.Exec(`UPDATE files SET size = ?, mtime = ? WHERE path = ?`, size, mtime, rel)
+		return nil, err
 	}
-	chunks := chunksFor(string(data), opts.MaxLines, opts.Overlap)
-	if len(chunks) == 0 {
-		return false, nil
+	f := &pendingFile{rel: rel, hash: hash, size: size, mtime: mtime}
+	if !hasBinaryByte(data) {
+		f.chunks = chunksFor(string(data), opts.MaxLines, opts.Overlap)
 	}
-	vecs := make([][]float32, 0, len(chunks))
-	for start := 0; start < len(chunks); start += opts.Batch {
-		end := start + opts.Batch
-		if end > len(chunks) {
-			end = len(chunks)
-		}
-		texts := make([]string, 0, end-start)
-		for _, c := range chunks[start:end] {
+	return f, nil
+}
+
+// flushPending embeds the chunks of several files in shared batches, so a
+// repository of small files costs one request per batch instead of one per
+// file (round trips dominate with hosted embeddings), then commits each file.
+func flushPending(ctx context.Context, db *sql.DB, files []*pendingFile, e Embedder, opts Options, stats *Stats) error {
+	var texts, owners []string
+	for _, f := range files {
+		for _, c := range f.chunks {
 			texts = append(texts, c.Text)
+			owners = append(owners, f.rel)
 		}
-		batch, err := e.Embed(ctx, texts)
+	}
+	vecs := make([][]float32, 0, len(texts))
+	for start := 0; start < len(texts); start += opts.Batch {
+		end := min(start+opts.Batch, len(texts))
+		batch, err := e.Embed(ctx, texts[start:end])
 		if err != nil {
-			return false, fmt.Errorf("embed %s: %w", rel, err)
+			return fmt.Errorf("embed %s: %w", owners[start], err)
 		}
-		if len(batch) != len(texts) {
-			return false, fmt.Errorf("embed %s: got %d vectors for %d chunks", rel, len(batch), len(texts))
+		if len(batch) != end-start {
+			return fmt.Errorf("embed %s: got %d vectors for %d chunks", owners[start], len(batch), end-start)
 		}
 		vecs = append(vecs, batch...)
 	}
+	for _, f := range files {
+		if err := writeFile(db, f, vecs[:len(f.chunks)]); err != nil {
+			return err
+		}
+		vecs = vecs[len(f.chunks):]
+		if len(f.chunks) == 0 {
+			// Binary or empty: recorded so it is not reported as drift, but nothing was indexed.
+			continue
+		}
+		stats.Files++
+		stats.Chunks += len(f.chunks)
+		stats.Embedded += len(f.chunks)
+		if opts.Progress != nil {
+			opts.Progress(f.rel)
+		}
+	}
+	return nil
+}
 
+func writeFile(db *sql.DB, f *pendingFile, vecs [][]float32) error {
 	tx, err := db.Begin()
 	if err != nil {
-		return false, err
+		return err
 	}
 	defer tx.Rollback()
-	if _, err := tx.Exec(`DELETE FROM chunks WHERE path = ?`, rel); err != nil {
-		return false, err
+	if _, err := tx.Exec(`DELETE FROM chunks WHERE path = ?`, f.rel); err != nil {
+		return err
 	}
-	for i, c := range chunks {
+	for i, c := range f.chunks {
 		if _, err := tx.Exec(
 			`INSERT INTO chunks(path, start_line, end_line, text, vec) VALUES(?, ?, ?, ?, ?)`,
-			rel, c.Start, c.End, c.Text, encodeVec(vecs[i]),
+			f.rel, c.Start, c.End, c.Text, encodeVec(vecs[i]),
 		); err != nil {
-			return false, err
+			return err
 		}
 	}
 	if _, err := tx.Exec(
 		`INSERT INTO files(path, hash, size, mtime) VALUES(?, ?, ?, ?)
 		 ON CONFLICT(path) DO UPDATE SET hash = excluded.hash, size = excluded.size, mtime = excluded.mtime`,
-		rel, hash, size, mtime,
+		f.rel, f.hash, f.size, f.mtime,
 	); err != nil {
-		return false, err
+		return err
 	}
-	if err := tx.Commit(); err != nil {
-		return false, err
-	}
-	stats.Files++
-	stats.Chunks += len(chunks)
-	stats.Embedded += len(chunks)
-	return true, nil
+	return tx.Commit()
 }
 
 func prune(db *sql.DB, seen map[string]bool) (int, error) {
@@ -334,8 +370,9 @@ func prune(db *sql.DB, seen map[string]bool) (int, error) {
 
 // Search returns the best-matching chunks by cosine similarity. Vectors are
 // scored in Go: at workspace scale a full scan is milliseconds and needs no
-// vector database extension.
-func Search(ctx context.Context, dbPath string, e Embedder, query string, limit int) ([]Hit, error) {
+// vector database extension. A non-empty model must match the one the index
+// was built with; vectors from different models are not comparable.
+func Search(ctx context.Context, dbPath string, e Embedder, model, query string, limit int) ([]Hit, error) {
 	if limit <= 0 {
 		limit = 8
 	}
@@ -347,6 +384,13 @@ func Search(ctx context.Context, dbPath string, e Embedder, query string, limit 
 		return nil, err
 	}
 	defer db.Close()
+	var built string
+	if err := db.QueryRow(`SELECT value FROM meta WHERE key = 'embed_model'`).Scan(&built); err != nil && !errors.Is(err, sql.ErrNoRows) {
+		return nil, err
+	}
+	if model != "" && built != "" && built != model {
+		return nil, fmt.Errorf("index was built with embedding model %q but %q is configured; run `cody index --rebuild`", built, model)
+	}
 	vecs, err := e.Embed(ctx, []string{query})
 	if err != nil {
 		return nil, err

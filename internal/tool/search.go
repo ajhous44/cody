@@ -7,7 +7,7 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/ajhous44/cody/internal/index"
+	"github.com/ajhous44/cody/v3/internal/index"
 )
 
 const maxHitChars = 1500
@@ -15,11 +15,12 @@ const maxHitChars = 1500
 type Search struct {
 	root  string
 	db    string
+	model string // index identity the query embedding must match
 	embed index.Embedder
 }
 
-func NewSearch(root, db string, embed index.Embedder) *Search {
-	return &Search{root: root, db: db, embed: embed}
+func NewSearch(root, db, model string, embed index.Embedder) *Search {
+	return &Search{root: root, db: db, model: model, embed: embed}
 }
 
 func (s *Search) Name() string { return "search" }
@@ -56,7 +57,7 @@ func (s *Search) Run(ctx context.Context, args json.RawMessage) (string, error) 
 	if strings.TrimSpace(a.Query) == "" {
 		return "", errors.New("query is required")
 	}
-	hits, err := index.Search(ctx, s.db, s.embed, a.Query, a.Limit)
+	hits, err := index.Search(ctx, s.db, s.embed, s.model, a.Query, a.Limit)
 	if err != nil {
 		return "", err
 	}

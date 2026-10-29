@@ -1,9 +1,12 @@
 package cli
 
 import (
+	"context"
+	"io"
 	"testing"
+	"time"
 
-	"github.com/ajhous44/cody/internal/session"
+	"github.com/ajhous44/cody/v3/internal/session"
 )
 
 func TestParseOneShotPrompt(t *testing.T) {
@@ -141,5 +144,44 @@ func TestParseSessionsCommand(t *testing.T) {
 	}
 	if o.command != "sessions" {
 		t.Fatalf("opts = %+v", o)
+	}
+}
+
+func TestParseDebugFlag(t *testing.T) {
+	for arg, want := range map[string]bool{"--debug": true, "--debug=true": true, "--debug=false": false, "--debug=0": false} {
+		o, err := parseArgs([]string{"serve", arg})
+		if err != nil || o.debug == nil || *o.debug != want {
+			t.Fatalf("%s: debug = %v, err = %v", arg, o.debug, err)
+		}
+	}
+	if o, _ := parseArgs([]string{"hi"}); o.debug != nil {
+		t.Fatal("debug set without the flag")
+	}
+	if _, err := parseArgs([]string{"--debug=maybe"}); err == nil {
+		t.Fatal("accepted --debug=maybe")
+	}
+}
+
+// The macOS app's server must stop when the app's end of stdin closes, but a
+// terminal `cody serve` must not watch stdin at all.
+func TestWatchStdinStopsServerWhenParentCloses(t *testing.T) {
+	if o, err := parseArgs([]string{"serve", "--watch-stdin"}); err != nil || !o.watchStdin {
+		t.Fatalf("flag not parsed: %+v %v", o, err)
+	}
+	if o, _ := parseArgs([]string{"serve"}); o.watchStdin {
+		t.Fatal("stdin watched without the flag")
+	}
+	r, w := io.Pipe()
+	ctx := cancelOnEOF(context.Background(), r)
+	select {
+	case <-ctx.Done():
+		t.Fatal("stopped while the parent was alive")
+	case <-time.After(50 * time.Millisecond):
+	}
+	w.Close() // what the OS does when the app dies
+	select {
+	case <-ctx.Done():
+	case <-time.After(2 * time.Second):
+		t.Fatal("server kept running after its parent closed stdin")
 	}
 }

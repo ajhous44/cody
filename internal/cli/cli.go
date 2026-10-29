@@ -16,22 +16,24 @@ import (
 	"strconv"
 	"strings"
 	"sync"
+	"syscall"
 	"time"
 
-	"github.com/ajhous44/cody/internal/agent"
-	"github.com/ajhous44/cody/internal/bench"
-	"github.com/ajhous44/cody/internal/config"
-	"github.com/ajhous44/cody/internal/engine"
-	"github.com/ajhous44/cody/internal/index"
-	"github.com/ajhous44/cody/internal/provider"
-	"github.com/ajhous44/cody/internal/server"
-	"github.com/ajhous44/cody/internal/session"
-	"github.com/ajhous44/cody/internal/tool"
-	"github.com/ajhous44/cody/internal/ui"
+	"github.com/ajhous44/cody/v3/internal/agent"
+	"github.com/ajhous44/cody/v3/internal/bench"
+	"github.com/ajhous44/cody/v3/internal/clip"
+	"github.com/ajhous44/cody/v3/internal/config"
+	"github.com/ajhous44/cody/v3/internal/engine"
+	"github.com/ajhous44/cody/v3/internal/index"
+	"github.com/ajhous44/cody/v3/internal/provider"
+	"github.com/ajhous44/cody/v3/internal/server"
+	"github.com/ajhous44/cody/v3/internal/session"
+	"github.com/ajhous44/cody/v3/internal/tool"
+	"github.com/ajhous44/cody/v3/internal/ui"
 )
 
 // Version is stamped by GoReleaser via ldflags on release builds.
-var Version = "0.1.0"
+var Version = "3.0.0"
 
 type app struct {
 	cfg    *config.Config
@@ -142,6 +144,9 @@ func applyFlags(cfg *config.Config, opts options) {
 	}
 	if opts.approval != "" {
 		cfg.Approval = opts.approval
+	}
+	if opts.debug != nil {
+		cfg.Debug = *opts.debug
 	}
 }
 
@@ -303,7 +308,7 @@ func (a *app) turn(text string) {
 }
 
 func (a *app) oneShot(text string) int {
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	err := a.eng.Send(ctx, text, a.u.Event)
 	a.u.StopThinking()
@@ -495,8 +500,10 @@ func cmdIndex(opts options) int {
 	if err != nil {
 		return fail(err)
 	}
-	if _, err := engine.EnsureOllama(cfg); err != nil {
-		return fail(err)
+	if name, _ := cfg.Embedding(); name == "ollama" {
+		if _, err := engine.EnsureOllama(cfg); err != nil {
+			return fail(err)
+		}
 	}
 	stats, err := runIndex(context.Background(), cfg, root, opts.rebuild)
 	if err != nil {
@@ -509,9 +516,12 @@ func cmdIndex(opts options) int {
 }
 
 func runIndex(ctx context.Context, cfg *config.Config, root string, rebuild bool) (index.Stats, error) {
+	if name, model := cfg.Embedding(); name == "openrouter" {
+		fmt.Fprintf(os.Stderr, "embedding with OpenRouter (%s): indexed file contents and search queries are sent to OpenRouter\n", model)
+	}
 	return index.Index(ctx, root, index.Path(root), engine.Embedder(cfg), index.Options{
 		Rebuild:  rebuild,
-		Model:    cfg.EmbedModel,
+		Model:    engine.EmbedID(cfg),
 		Progress: func(path string) { fmt.Fprintf(os.Stderr, "embedding %s\n", path) },
 	})
 }
@@ -544,24 +554,6 @@ func cmdServe(opts options) int {
 			}
 		}
 	}
-	if strings.EqualFold(cfg.Provider, "ollama") {
-		if _, err := engine.EnsureOllama(cfg); err != nil {
-			return fail(err)
-		}
-	}
-	eng, err := engine.New(engine.Options{
-		Root:    root,
-		Cfg:     cfg,
-		Version: Version,
-		Store:   session.New(root, resumeID),
-		Resumed: resumeID != "",
-		History: engine.MessagesFromRecords(resumeRecs),
-	})
-	if err != nil {
-		return fail(err)
-	}
-	defer eng.Close()
-
 	addr := opts.addr
 	if addr == "" {
 		addr = defaultServeAddr
@@ -570,8 +562,32 @@ func cmdServe(opts options) int {
 	if err != nil {
 		return fail(fmt.Errorf("invalid --addr %q: %w", addr, err))
 	}
-	srv := server.New(eng, host, opts.token)
-	eng.SetApprover(srv)
+
+	factory := func(spaceRoot string) (server.Engine, error) {
+		return engine.New(engine.Options{
+			Root:       spaceRoot,
+			DeferModel: true,
+			Cfg:        cfg,
+			Version:    Version,
+			Store:      session.New(spaceRoot, ""),
+		})
+	}
+	srv, err := server.New(server.Options{
+		Root:      root,
+		Host:      host,
+		Token:     opts.token,
+		Cfg:       cfg,
+		NewEngine: factory,
+	})
+	if err != nil {
+		return fail(err)
+	}
+	defer srv.Close()
+	if resumeID != "" {
+		if err := srv.OpenSession(resumeID); err != nil {
+			return fail(err)
+		}
+	}
 
 	urlHost := host
 	if urlHost == "" || urlHost == "0.0.0.0" || urlHost == "::" {
@@ -579,7 +595,7 @@ func cmdServe(opts options) int {
 	}
 	url := fmt.Sprintf("http://%s/?token=%s", net.JoinHostPort(urlHost, port), srv.Token())
 	fmt.Printf("cody serve  %s\n", url)
-	fmt.Printf("%s  ·  %s/%s\n", root, eng.ProviderName(), eng.Model())
+	fmt.Printf("%s  ·  %s/%s\n", root, srv.ProviderName(), srv.Model())
 	if !server.IsLoopbackHost(host) {
 		fmt.Println("warning: listening on a non-loopback address; anyone with the token URL can use cody")
 	}
@@ -591,8 +607,11 @@ func cmdServe(opts options) int {
 		ReadHeaderTimeout: 10 * time.Second,
 		IdleTimeout:       120 * time.Second,
 	}
-	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt)
+	sigCtx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
+	if opts.watchStdin {
+		sigCtx = cancelOnEOF(sigCtx, os.Stdin)
+	}
 	go func() {
 		<-sigCtx.Done()
 		ctx, cancel := context.WithTimeout(context.Background(), 3*time.Second)
@@ -608,6 +627,18 @@ func cmdServe(opts options) int {
 		return fail(err)
 	}
 	return 0
+}
+
+// cancelOnEOF ends ctx when r closes. The macOS app holds the only write end
+// of the server's stdin, so the OS closes it when the app exits for any
+// reason, including a crash or force quit, and the server never outlives it.
+func cancelOnEOF(ctx context.Context, r io.Reader) context.Context {
+	ctx, cancel := context.WithCancel(ctx)
+	go func() {
+		io.Copy(io.Discard, r)
+		cancel()
+	}()
+	return ctx
 }
 
 func openBrowser(url string) error {
@@ -662,7 +693,7 @@ func cmdBench(opts options) int {
 		}
 		return 0
 	}
-	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt)
+	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
 	err = bench.Run(ctx, bench.Options{
 		ProviderName: name,
@@ -722,7 +753,7 @@ func truncate(s string, max int) string {
 	if len(s) <= max {
 		return s
 	}
-	return s[:max] + "..."
+	return clip.Bytes(s, max) + "..."
 }
 
 func fail(err error) int {
@@ -755,11 +786,13 @@ flags:
       --show-thinking      print model reasoning traces (hidden by default)
       --resume ID          resume a session by id (or "last")
       --allow-home         allow running with $HOME as the workspace
+      --debug[=BOOL]       show raw provider errors and every retry
 
 serve flags:
       --addr HOST:PORT     listen address (default 127.0.0.1:8765)
       --token TOKEN        fixed access token (random by default)
       --open               open the GUI in your browser
+      --watch-stdin        exit when stdin closes (the macOS app uses this)
 
 index flags:
       --rebuild            discard the existing index and rebuild from scratch
@@ -773,6 +806,7 @@ bench flags:
 
 config: ~/.cody/config.json
 env:    CODY_PROVIDER, CODY_MODEL, CODY_APPROVAL, CODY_API_KEY,
-        CODY_NO_AUTOSTART, OLLAMA_HOST, OPENROUTER_API_KEY
+        CODY_NO_AUTOSTART, CODY_EMBED_PROVIDER, OLLAMA_HOST, OPENROUTER_API_KEY,
+        CODY_DEBUG
 `)
 }

@@ -23,6 +23,12 @@ type Model struct {
 	Size         int64    `json:"size"`
 	Modified     string   `json:"modified_at"`
 	Capabilities []string `json:"capabilities"`
+	Details      struct {
+		Family        string `json:"family"`
+		ParameterSize string `json:"parameter_size"`
+		Quantization  string `json:"quantization_level"`
+		ContextLength int    `json:"context_length"`
+	} `json:"details"`
 }
 
 // SupportsTools reports whether the model can chat with tools. Older Ollama
@@ -39,6 +45,18 @@ func (m Model) SupportsTools() bool {
 	return false
 }
 
+// ollamaTransport is shared by every Ollama API call so connections are
+// reused (keep-alive) instead of re-dialed per request.
+var ollamaTransport = &http.Transport{
+	MaxIdleConns:        16,
+	MaxIdleConnsPerHost: 8,
+	IdleConnTimeout:     90 * time.Second,
+}
+
+func ollamaClient(timeout time.Duration) *http.Client {
+	return &http.Client{Transport: ollamaTransport, Timeout: timeout}
+}
+
 func OllamaHost(baseURL string) string {
 	h := strings.TrimRight(baseURL, "/")
 	return strings.TrimSuffix(h, "/v1")
@@ -49,7 +67,7 @@ func ListOllamaModels(ctx context.Context, baseURL string) ([]Model, error) {
 	if err != nil {
 		return nil, err
 	}
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
+	resp, err := ollamaClient(5 * time.Second).Do(req)
 	if err != nil {
 		return nil, fmt.Errorf("ollama: %w (is ollama running?)", err)
 	}
@@ -74,6 +92,9 @@ func ListOllamaModels(ctx context.Context, baseURL string) ([]Model, error) {
 func EnsureOllama(ctx context.Context, baseURL string) (bool, error) {
 	if ollamaUp(ctx, baseURL) {
 		return false, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return false, err
 	}
 	if !isLocalHost(baseURL) {
 		return false, fmt.Errorf("ollama at %s is not reachable", OllamaHost(baseURL))
@@ -105,7 +126,7 @@ func ollamaUp(ctx context.Context, baseURL string) bool {
 	if err != nil {
 		return false
 	}
-	resp, err := (&http.Client{Timeout: time.Second}).Do(req)
+	resp, err := ollamaClient(time.Second).Do(req)
 	if err != nil {
 		return false
 	}
@@ -218,7 +239,7 @@ func ollamaPost(ctx context.Context, url string, body, out any) error {
 		return err
 	}
 	req.Header.Set("Content-Type", "application/json")
-	resp, err := (&http.Client{Timeout: 2 * time.Minute}).Do(req)
+	resp, err := ollamaClient(2 * time.Minute).Do(req)
 	if err != nil {
 		return fmt.Errorf("ollama: %w (is ollama running?)", err)
 	}
@@ -235,7 +256,33 @@ func ollamaPost(ctx context.Context, url string, body, out any) error {
 
 type RunningModel struct {
 	Name          string `json:"name"`
+	Size          int64  `json:"size"`
+	SizeVRAM      int64  `json:"size_vram"`
 	ContextLength int    `json:"context_length"`
+	ExpiresAt     string `json:"expires_at"`
+}
+
+// OllamaRunning lists models currently loaded into memory.
+func OllamaRunning(ctx context.Context, baseURL string) ([]RunningModel, error) {
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OllamaHost(baseURL)+"/api/ps", nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := ollamaClient(5 * time.Second).Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("ollama: HTTP %d", resp.StatusCode)
+	}
+	var out struct {
+		Models []RunningModel `json:"models"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+		return nil, err
+	}
+	return out.Models, nil
 }
 
 // OllamaLoadedContext returns the context window of the running instance of
@@ -243,30 +290,37 @@ type RunningModel struct {
 // silently ignores num_ctx, so this is the window the server will actually
 // use for requests.
 func OllamaLoadedContext(ctx context.Context, baseURL, model string) int {
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, OllamaHost(baseURL)+"/api/ps", nil)
+	models, err := OllamaRunning(ctx, baseURL)
 	if err != nil {
 		return 0
 	}
-	resp, err := (&http.Client{Timeout: 5 * time.Second}).Do(req)
-	if err != nil {
-		return 0
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0
-	}
-	var out struct {
-		Models []RunningModel `json:"models"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return 0
-	}
-	for _, m := range out.Models {
-		if m.Name == model || strings.TrimSuffix(m.Name, ":latest") == strings.TrimSuffix(model, ":latest") {
+	for _, m := range models {
+		if matchModelName(m.Name, model) {
 			return m.ContextLength
 		}
 	}
 	return 0
+}
+
+// OllamaModelLoaded reports whether model is currently loaded in Ollama. The
+// second result is false when the server cannot be reached, so callers can
+// tell "cold" apart from "unknown" and only announce a startup they know
+// is real.
+func OllamaModelLoaded(ctx context.Context, baseURL, model string) (loaded, known bool) {
+	models, err := OllamaRunning(ctx, baseURL)
+	if err != nil {
+		return false, false
+	}
+	for _, m := range models {
+		if matchModelName(m.Name, model) {
+			return true, true
+		}
+	}
+	return false, true
+}
+
+func matchModelName(have, want string) bool {
+	return have == want || strings.TrimSuffix(have, ":latest") == strings.TrimSuffix(want, ":latest")
 }
 
 var modelPreference = []string{

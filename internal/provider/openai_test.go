@@ -266,11 +266,48 @@ func TestOllamaLoadedContext(t *testing.T) {
 	}
 }
 
+func TestOllamaModelLoaded(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{"models":[{"name":"gemma4:e4b","context_length":16384}]}`)
+	}))
+	defer srv.Close()
+
+	ctx := context.Background()
+	if loaded, known := OllamaModelLoaded(ctx, srv.URL+"/v1", "gemma4:e4b"); !loaded || !known {
+		t.Fatalf("loaded model = %v, %v", loaded, known)
+	}
+	if loaded, known := OllamaModelLoaded(ctx, srv.URL+"/v1", "missing:1b"); loaded || !known {
+		t.Fatalf("missing model = %v, %v", loaded, known)
+	}
+
+	srv.Close()
+	if _, known := OllamaModelLoaded(ctx, srv.URL+"/v1", "gemma4:e4b"); known {
+		t.Fatal("unreachable server should be unknown, not cold")
+	}
+}
+
 func TestOllamaHost(t *testing.T) {
 	if got := OllamaHost("http://localhost:11434/v1"); got != "http://localhost:11434" {
 		t.Fatalf("host = %q", got)
 	}
 	if got := OllamaHost("http://localhost:11434/v1/"); got != "http://localhost:11434" {
 		t.Fatalf("host = %q", got)
+	}
+}
+
+func TestStatusErrorKeepsActionableBusyReasons(t *testing.T) {
+	for _, tc := range []struct {
+		code int
+		msg  string
+		want string
+	}{
+		{500, "model requires more system memory (12 GiB) than is available", "ollama: HTTP 500: model requires more system memory (12 GiB) than is available"},
+		{502, "Provider returned error", "m is busy or unavailable right now (ollama 502). Try again in a moment or switch models"},
+		{503, "<html>bad gateway</html>", "m is busy or unavailable right now (ollama 503). Try again in a moment or switch models"},
+		{429, "slow down", "m is rate-limited right now (ollama 429). Try again in a moment or switch models"},
+	} {
+		if got := statusError("ollama", "m", tc.code, tc.msg).Error(); got != tc.want {
+			t.Errorf("%d %q: got %q, want %q", tc.code, tc.msg, got, tc.want)
+		}
 	}
 }

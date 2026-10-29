@@ -24,7 +24,7 @@ func NewBash(root string) *Bash { return &Bash{root: root} }
 func (b *Bash) Name() string { return "bash" }
 
 func (b *Bash) Description() string {
-	return "Run a shell command from the workspace root. Returns combined stdout/stderr and the exit code. Use for search, git, builds, and tests."
+	return "Run a " + shellName + " command from the workspace root. Returns combined stdout/stderr and the exit code. Use for search, git, builds, and tests."
 }
 
 func (b *Bash) Mutating() bool { return true }
@@ -64,13 +64,13 @@ func (b *Bash) Run(ctx context.Context, args json.RawMessage) (string, error) {
 	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, "bash", "-c", a.Command)
+	cmd := shellCommand(ctx, a.Command)
 	cmd.Dir = b.root
 	var out cappedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	start := time.Now()
-	err := cmd.Run()
+	err := runShell(cmd)
 	elapsed := time.Since(start)
 	code := 0
 	if err != nil {

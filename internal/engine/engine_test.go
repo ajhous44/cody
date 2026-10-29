@@ -2,18 +2,20 @@ package engine
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"sync/atomic"
 	"testing"
 
-	"github.com/ajhous44/cody/internal/agent"
-	"github.com/ajhous44/cody/internal/config"
-	"github.com/ajhous44/cody/internal/session"
-	"github.com/ajhous44/cody/internal/tool"
+	"github.com/ajhous44/cody/v3/internal/agent"
+	"github.com/ajhous44/cody/v3/internal/config"
+	"github.com/ajhous44/cody/v3/internal/session"
+	"github.com/ajhous44/cody/v3/internal/tool"
 )
 
 func testConfig(srv *httptest.Server, approval string) *config.Config {
@@ -46,7 +48,7 @@ func sseServer(t *testing.T, responses ...[]string) *httptest.Server {
 
 func newEngine(t *testing.T, cfg *config.Config, root string, approve agent.Approver) *Engine {
 	t.Helper()
-	t.Setenv("HOME", t.TempDir())
+	t.Setenv("CODY_CONFIG_DIR", t.TempDir())
 	eng, err := New(Options{
 		Root:     root,
 		Cfg:      cfg,
@@ -190,6 +192,86 @@ func TestMessagesFromRecords(t *testing.T) {
 	}
 }
 
+func TestNewSessionWritesMeta(t *testing.T) {
+	srv := sseServer(t, finalResponse)
+	defer srv.Close()
+	root := t.TempDir()
+	eng := newEngine(t, testConfig(srv, "yolo"), root, nil)
+
+	if err := eng.NewSession(); err != nil {
+		t.Fatalf("NewSession: %v", err)
+	}
+	infos, err := session.List(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].ID != eng.SessionID() {
+		t.Fatalf("new thread should be visible immediately: %+v", infos)
+	}
+}
+
+func TestTitleUsesModelAndStores(t *testing.T) {
+	srv := sseServer(t, []string{
+		`{"choices":[{"delta":{"content":"\"Fix flaky login test.\""},"finish_reason":"stop"}]}`,
+	})
+	defer srv.Close()
+	root := t.TempDir()
+	eng := newEngine(t, testConfig(srv, "yolo"), root, nil)
+
+	title := eng.Title(context.Background(), "the login test keeps failing, please fix it")
+	if title != "Fix flaky login test" {
+		t.Fatalf("title = %q", title)
+	}
+	infos, err := session.List(root)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if len(infos) != 1 || infos[0].First != "Fix flaky login test" {
+		t.Fatalf("title not stored: %+v", infos)
+	}
+}
+
+func TestParseTitle(t *testing.T) {
+	cases := []struct{ in, want string }{
+		{`{"title":"fix flaky login test"}`, "fix flaky login test"},
+		{"Sure!\n```json\n{\"title\": \"refactor retry logic\"}\n```", "refactor retry logic"},
+		{`{"reason":"update readme badges"}`, "update readme badges"},
+		{`{"summary":"tighten context trimming"}`, "tighten context trimming"},
+		{"  Plain summary of the ask  ", "Plain summary of the ask"},
+		{`{"title":""}`, ""},
+	}
+	for _, c := range cases {
+		if got := parseTitle(c.in); got != c.want {
+			t.Fatalf("parseTitle(%q) = %q, want %q", c.in, got, c.want)
+		}
+	}
+}
+
+func TestTitleFallsBackToDateTime(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	eng := newEngine(t, testConfig(srv, "yolo"), t.TempDir(), nil)
+	if title := eng.Title(context.Background(), ""); title == "" {
+		t.Fatal("expected a date/time fallback title")
+	}
+}
+
+func TestTitleFallsBackWhenModelFails(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	defer srv.Close()
+	root := t.TempDir()
+	eng := newEngine(t, testConfig(srv, "yolo"), root, nil)
+
+	title := eng.Title(context.Background(), "refactor the payment retry logic please")
+	if title != "refactor the payment retry logic" {
+		t.Fatalf("fallback title = %q", title)
+	}
+}
+
 func TestContextBudgetUsesLoadedOllamaContext(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"models":[{"name":"m:latest","context_length":16384}]}`)
@@ -198,11 +280,86 @@ func TestContextBudgetUsesLoadedOllamaContext(t *testing.T) {
 
 	cfg := config.Default()
 	cfg.Providers["ollama"] = config.Provider{BaseURL: srv.URL + "/v1"}
-	if got := contextBudget(context.Background(), cfg, "ollama", "m:latest"); got != 12288 {
-		t.Fatalf("budget = %d, want 12288", got)
+	if got, _ := modelLimits(context.Background(), cfg, "ollama", "m:latest"); got != 16384 {
+		t.Fatalf("budget = %d, want 16384", got)
 	}
-	if got := contextBudget(context.Background(), cfg, "openrouter", "m"); got != 64000 {
-		t.Fatalf("budget = %d, want 64000", got)
+	cfg.Providers["openrouter"] = config.Provider{BaseURL: srv.URL}
+	if got, _ := modelLimits(context.Background(), cfg, "openrouter", "m"); got != 0 {
+		t.Fatalf("budget = %d, want unknown (0)", got)
+	}
+}
+
+func TestSendAnnouncesColdOllamaModel(t *testing.T) {
+	mux := http.NewServeMux()
+	var loaded atomic.Bool
+	mux.HandleFunc("/api/version", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprint(w, `{ "version": "test" }`)
+	})
+	mux.HandleFunc("/api/ps", func(w http.ResponseWriter, r *http.Request) {
+		if loaded.Load() {
+			fmt.Fprint(w, `{"models":[{"name":"cold:model"}]}`)
+		} else {
+			fmt.Fprint(w, `{"models":[]}`)
+		}
+	})
+	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "text/event-stream")
+		for _, chunk := range finalResponse {
+			fmt.Fprintf(w, "data: %s\n\n", chunk)
+		}
+		fmt.Fprint(w, "data: [DONE]\n\n")
+	})
+	srv := httptest.NewServer(mux)
+	defer srv.Close()
+
+	cfg := config.Default()
+	cfg.Provider = "ollama"
+	cfg.Model = "cold:model"
+	cfg.Approval = "yolo"
+	cfg.Providers["ollama"] = config.Provider{BaseURL: srv.URL + "/v1"}
+	eng := newEngine(t, cfg, t.TempDir(), nil)
+
+	var statuses []string
+	err := eng.Send(context.Background(), "hi", func(e agent.Event) {
+		if e.Kind == agent.KindThinking {
+			statuses = append(statuses, e.Text)
+		}
+	})
+	if err != nil {
+		t.Fatalf("Send: %v", err)
+	}
+	if len(statuses) < 2 || statuses[0] != "Loading model… cold:model" {
+		t.Fatalf("loading status must precede inference, got %v", statuses)
+	}
+	loaded.Store(true)
+	if err := eng.Send(context.Background(), "hi again", func(e agent.Event) {
+		if e.Kind == agent.KindThinking && e.Text != "" {
+			t.Errorf("warm model reported loading: %q", e.Text)
+		}
+	}); err != nil {
+		t.Fatal(err)
+	}
+}
+
+func TestSendConfiguredOllamaChecksStartup(t *testing.T) {
+	t.Setenv("CODY_NO_AUTOSTART", "1")
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.Method == http.MethodPost {
+			t.Error("inference attempted before Ollama was ready")
+		}
+		http.Error(w, "offline", http.StatusServiceUnavailable)
+	}))
+	defer srv.Close()
+	cfg := config.Default()
+	cfg.Provider, cfg.Model = "ollama", "saved:model"
+	cfg.Providers["ollama"] = config.Provider{BaseURL: srv.URL + "/v1"}
+	eng := newEngine(t, cfg, t.TempDir(), nil)
+	var loading bool
+	err := eng.Send(context.Background(), "hi", func(e agent.Event) {
+		loading = loading || e.Kind == agent.KindThinking && strings.Contains(e.Text, "Loading model")
+	})
+	if err == nil || !strings.Contains(err.Error(), "autostart is disabled") || !loading {
+		t.Fatalf("startup check: loading=%v, error=%v", loading, err)
 	}
 }
 
@@ -227,5 +384,30 @@ func TestProviderName(t *testing.T) {
 	eng := newEngine(t, testConfig(srv, "ask"), t.TempDir(), nil)
 	if got := eng.ProviderName(); got != "test" {
 		t.Fatalf("provider = %q", got)
+	}
+}
+
+func TestOpenRouterEmbedderIsOptInAndNamesItsIndex(t *testing.T) {
+	var model atomic.Value
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var req struct{ Model string }
+		_ = json.NewDecoder(r.Body).Decode(&req)
+		model.Store(req.Model)
+		fmt.Fprint(w, `{"data":[{"index":0,"embedding":[1,2]}]}`)
+	}))
+	defer srv.Close()
+	t.Setenv("OPENROUTER_API_KEY", "")
+	t.Setenv("CODY_API_KEY", "")
+	cfg := config.Default()
+	if EmbedID(cfg) != config.DefaultEmbedModel {
+		t.Fatalf("default index id %q", EmbedID(cfg))
+	}
+	cfg.EmbedProvider = "openrouter"
+	cfg.Providers["openrouter"] = config.Provider{BaseURL: srv.URL, APIKey: "k"}
+	if _, err := Embedder(cfg).Embed(context.Background(), []string{"x"}); err != nil {
+		t.Fatal(err)
+	}
+	if model.Load() != config.DefaultOpenRouterEmbedModel || EmbedID(cfg) != "openrouter:"+config.DefaultOpenRouterEmbedModel {
+		t.Fatalf("model %v id %q", model.Load(), EmbedID(cfg))
 	}
 }

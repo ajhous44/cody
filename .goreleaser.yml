@@ -15,16 +15,20 @@ builds:
     goos:
       - darwin
       - linux
+      - windows
     goarch:
       - amd64
       - arm64
     flags:
       - -trimpath
     ldflags:
-      - -s -w -X github.com/ajhous44/cody/internal/cli.Version={{ .Version }}
+      - -s -w -X github.com/ajhous44/cody/v3/internal/cli.Version={{ .Version }}
 
 archives:
   - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
     name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
     files:
       - README.md

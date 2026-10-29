@@ -3,7 +3,7 @@ package main
 import (
 	"os"
 
-	"github.com/ajhous44/cody/internal/cli"
+	"github.com/ajhous44/cody/v3/internal/cli"
 )
 
 func main() {

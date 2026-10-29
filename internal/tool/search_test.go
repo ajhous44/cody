@@ -7,7 +7,7 @@ import (
 	"strings"
 	"testing"
 
-	"github.com/ajhous44/cody/internal/index"
+	"github.com/ajhous44/cody/v3/internal/index"
 )
 
 func wordEmbedder(_ context.Context, texts []string) ([][]float32, error) {
@@ -37,7 +37,7 @@ func TestSearchTool(t *testing.T) {
 		t.Fatalf("Index: %v", err)
 	}
 
-	s := NewSearch(dir, db, e)
+	s := NewSearch(dir, db, "", e)
 	out, err := s.Run(context.Background(), []byte(`{"query":"Login"}`))
 	if err != nil {
 		t.Fatalf("Run: %v", err)
@@ -60,7 +60,7 @@ func TestSearchTool(t *testing.T) {
 		t.Fatalf("stale index not reported: %q", out)
 	}
 
-	s = NewSearch(dir, filepath.Join(t.TempDir(), "missing.db"), e)
+	s = NewSearch(dir, filepath.Join(t.TempDir(), "missing.db"), "", e)
 	if _, err := s.Run(context.Background(), []byte(`{"query":"Login"}`)); err == nil || !strings.Contains(err.Error(), "not indexed") {
 		t.Fatalf("err = %v", err)
 	}
