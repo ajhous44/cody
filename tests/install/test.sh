@@ -15,7 +15,8 @@ if [ "$os" = windows ]; then
 	exe=cody.exe
 fi
 tmp="$(mktemp -d)"
-trap 'kill "${server:-}" 2>/dev/null || true; rm -rf "$tmp"' EXIT
+# Cleanup never fails the run: Windows may briefly hold files the server used.
+trap 'kill "${server:-}" 2>/dev/null; rm -rf "$tmp" 2>/dev/null; true' EXIT
 
 rel="$tmp/mirror/download/v$version"
 mkdir -p "$rel" "$tmp/build"
@@ -32,7 +33,7 @@ sha() { "$py" -c 'import hashlib, sys; print(hashlib.sha256(open(sys.argv[1], "r
 echo "$(sha "$rel/$asset")  $asset" >"$rel/checksums.txt"
 
 port=18766
-(cd "$tmp/mirror" && exec "$py" -m http.server --bind 127.0.0.1 "$port") >/dev/null 2>&1 &
+"$py" -m http.server --directory "$tmp/mirror" --bind 127.0.0.1 "$port" >/dev/null 2>&1 &
 server=$!
 disown "$server" # no "Terminated" notice when the trap stops it
 for _ in $(seq 50); do

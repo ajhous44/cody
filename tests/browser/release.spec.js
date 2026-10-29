@@ -214,11 +214,16 @@ test('plan gate shows the plan before anything changes and blocks unplanned chan
   await card.locator('button.allow').click();
   await expect(page.locator('#transcript .assistant').last()).toHaveText('small answer');
 
-  // A new request with a change but no plan is refused without asking.
-  const answers = await page.locator('#transcript .assistant').count();
+  // A new request with a change but no plan is refused without asking: the
+  // reply follows the new message and no approval card appears.
   await page.locator('#input').fill('write sample');
   await page.locator('#send').click();
-  await expect(page.locator('#transcript .assistant')).toHaveCount(answers + 1);
+  await expect.poll(() => page.evaluate(() => {
+    const turns = [...document.querySelectorAll('#transcript > .user, #transcript > .assistant')];
+    const [prev, last] = turns.slice(-2);
+    return prev && prev.classList.contains('user') && prev.firstChild.textContent === 'write sample' &&
+      last.classList.contains('assistant') ? last.textContent : '';
+  })).toBe('small answer');
   await expect(page.locator('#approval-dock .approval')).toHaveCount(0);
   await expect(page.locator('#statustext')).toHaveText('ready');
 
@@ -229,9 +234,10 @@ test('plan gate shows the plan before anything changes and blocks unplanned chan
 test('fork from a past message opens a new thread with that message ready to edit', async ({ page }) => {
   await page.goto('/?token=browser-test');
   const users = page.locator('#transcript .user');
-  await expect(users.last()).toBeVisible();
-  const count = await users.count();
-  const text = await users.last().evaluate((n) => n.firstChild.textContent);
+  await expect(users.nth(1)).toBeVisible();
+  const lastText = () => users.last().evaluate((n) => n.firstChild.textContent);
+  const text = await lastText();
+  const previous = await users.nth(-2).evaluate((n) => n.firstChild.textContent);
   const threads = page.locator('.item.thread');
   const before = await threads.count();
 
@@ -240,5 +246,5 @@ test('fork from a past message opens a new thread with that message ready to edi
   await expect(threads).toHaveCount(before + 1);
   await expect(page.locator('.item.thread.active')).toContainText('(fork)');
   // The fork holds everything before that message, not the message itself.
-  await expect(users).toHaveCount(count - 1);
+  await expect.poll(lastText).toBe(previous);
 });
