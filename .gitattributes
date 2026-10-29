@@ -1,0 +1,3 @@
+# Keep LF everywhere: gofmt and the shell installers expect it, and Git for
+# Windows would otherwise check files out with CRLF.
+* text=auto eol=lf

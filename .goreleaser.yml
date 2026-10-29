@@ -1,0 +1,83 @@
+version: 2
+
+project_name: cody
+
+before:
+  hooks:
+    - go test ./...
+
+builds:
+  - id: cody
+    main: .
+    binary: cody
+    env:
+      - CGO_ENABLED=0
+    goos:
+      - darwin
+      - linux
+      - windows
+    goarch:
+      - amd64
+      - arm64
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X github.com/ajhous44/cody/v3/internal/cli.Version={{ .Version }}
+
+archives:
+  - formats: [tar.gz]
+    format_overrides:
+      - goos: windows
+        formats: [zip]
+    name_template: "{{ .ProjectName }}_{{ .Version }}_{{ .Os }}_{{ .Arch }}"
+    files:
+      - README.md
+      - LICENSE
+      - CONTRIBUTING.md
+
+checksum:
+  name_template: checksums.txt
+
+# The one-line installers ship with each release, so
+# releases/latest/download/install.sh always matches the latest archives.
+release:
+  extra_files:
+    - glob: ./install.sh
+    - glob: ./install.ps1
+
+changelog:
+  sort: asc
+  filters:
+    exclude:
+      - "^docs:"
+      - "^test:"
+      - "^ci:"
+      - "^chore:"
+
+brews:
+  - repository:
+      owner: ajhous44
+      name: homebrew-tap
+      token: "{{ .Env.HOMEBREW_TAP_TOKEN }}"
+    directory: Formula
+    homepage: https://github.com/ajhous44/cody
+    description: "A small coding agent for the terminal"
+    license: MIT
+    # Skip the tap update when no token is configured so the GitHub release
+    # still publishes.
+    skip_upload: '{{ if index .Env "HOMEBREW_TAP_TOKEN" }}false{{ else }}true{{ end }}'
+    install: |
+      bin.install "cody"
+    test: |
+      system "#{bin}/cody", "version"
+
+scoops:
+  - repository:
+      owner: ajhous44
+      name: scoop-bucket
+      token: "{{ .Env.SCOOP_BUCKET_TOKEN }}"
+    homepage: https://github.com/ajhous44/cody
+    description: "A small coding agent for the terminal"
+    license: MIT
+    # Like the tap: without a token the release still publishes.
+    skip_upload: '{{ if index .Env "SCOOP_BUCKET_TOKEN" }}false{{ else }}true{{ end }}'
