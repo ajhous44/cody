@@ -76,7 +76,13 @@ func Resolve(root, p string) (string, error) {
 	}
 	abs := p
 	if !filepath.IsAbs(abs) {
-		abs = filepath.Join(root, p)
+		if filepath.Separator == '\\' && (strings.HasPrefix(p, `\`) || strings.HasPrefix(p, "/")) {
+			// Windows: a rooted path without a drive ("/etc/passwd") is on the
+			// workspace's drive, not inside the workspace, as on Unix.
+			abs = filepath.VolumeName(root) + p
+		} else {
+			abs = filepath.Join(root, p)
+		}
 	}
 	abs = filepath.Clean(abs)
 	rel, err := filepath.Rel(root, abs)
