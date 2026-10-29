@@ -139,12 +139,15 @@ func TestAgentsScopeAndPrecedence(t *testing.T) {
 }
 
 func TestOptionalRulesOnlyForEnabledTools(t *testing.T) {
-	if got := Optional(false, false, false); got != "" {
+	if got := Optional(Opts{Sandbox: "off"}); got != "" {
 		t.Fatalf("disabled tools should add no rules:\n%s", got)
 	}
-	web, browser := Optional(true, false, false), Optional(false, true, false)
-	if plan := Optional(false, false, true); !strings.Contains(plan, "call plan") || strings.Contains(plan, "untrusted") {
+	web, browser := Optional(Opts{Web: true}), Optional(Opts{Browser: true})
+	if plan := Optional(Opts{Plan: true}); !strings.Contains(plan, "call plan") || strings.Contains(plan, "untrusted") {
 		t.Fatalf("plan rules wrong:\n%s", plan)
+	}
+	if sb := Optional(Opts{Sandbox: "strict"}); !strings.Contains(sb, "sandbox") || !strings.Contains(sb, "no network") {
+		t.Fatalf("sandbox rules wrong:\n%s", sb)
 	}
 	if !strings.Contains(web, "web_fetch") || strings.Contains(web, "refs from") || !strings.Contains(web, "untrusted") {
 		t.Fatalf("web rules wrong:\n%s", web)

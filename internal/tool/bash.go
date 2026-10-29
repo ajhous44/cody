@@ -17,9 +17,18 @@ const (
 	maxBashOutput      = 32 << 10
 )
 
-type Bash struct{ root string }
+type Bash struct {
+	root    string
+	sandbox Sandbox
+}
 
 func NewBash(root string) *Bash { return &Bash{root: root} }
+
+// WithSandbox confines every command this tool runs; see Sandbox.
+func (b *Bash) WithSandbox(sb Sandbox) *Bash {
+	b.sandbox = sb
+	return b
+}
 
 func (b *Bash) Name() string { return "bash" }
 
@@ -62,15 +71,21 @@ func (b *Bash) Run(ctx context.Context, args json.RawMessage) (string, error) {
 	if timeout > maxBashTimeout {
 		timeout = maxBashTimeout
 	}
+	if err := b.sandbox.validate(); err != nil {
+		return "", err
+	}
 	ctx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
-	cmd := shellCommand(ctx, a.Command)
+	cmd, err := sandboxCommand(ctx, b.sandbox, b.root, a.Command)
+	if err != nil {
+		return "", err
+	}
 	cmd.Dir = b.root
 	var out cappedBuffer
 	cmd.Stdout = &out
 	cmd.Stderr = &out
 	start := time.Now()
-	err := runShell(cmd)
+	err = runShell(cmd)
 	elapsed := time.Since(start)
 	code := 0
 	if err != nil {

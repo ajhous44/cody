@@ -38,6 +38,16 @@ jobs:
       - name: Installers
         run: bash tests/install/test.sh
 
+      - name: Container profile
+        if: runner.os == 'Linux'
+        run: |
+          docker build -t cody-ci .
+          docker run --rm cody-ci version
+          # The mounted project is writable and the image is not.
+          docker run --rm --user "$(id -u):$(id -g)" -v "$PWD:/workspace" --entrypoint bash cody-ci \
+            -c 'touch /workspace/.ci-probe && ! touch /usr/local/bin/probe'
+          rm -f .ci-probe
+
       - uses: actions/setup-node@v4
         with:
           node-version: "22"

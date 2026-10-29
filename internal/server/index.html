@@ -471,6 +471,16 @@
         </section>
 
         <section class="settings-section">
+          <h3>shell sandbox</h3>
+          <select id="set-sandbox" aria-label="Shell sandbox">
+            <option value="off">off</option>
+            <option value="workspace">workspace: writes only in the project, temp, and caches</option>
+            <option value="strict">strict: workspace, plus no network</option>
+          </select>
+          <p class="hint" id="set-sandbox-hint">Enforced by the OS for shell commands. Same as <code>cody --sandbox</code>.</p>
+        </section>
+
+        <section class="settings-section">
           <h3>debug</h3>
           <label class="check"><input type="checkbox" id="set-debug">Show raw provider errors</label>
           <p class="hint">Adds the provider's raw status and message to errors and lists every retry. Same as <code>cody --debug</code>.</p>
@@ -1704,6 +1714,9 @@
     $("set-browser-enabled").checked = !!s.browserEnabled;
     $("set-debug").checked = !!s.debug;
     $("set-plan").checked = !!s.planGate;
+    $("set-sandbox").value = s.sandbox || "off";
+    $("set-sandbox").disabled = !s.sandboxSupported;
+    if (!s.sandboxSupported) $("set-sandbox-hint").textContent = "Not available on this OS; run cody in the container profile instead.";
     $("set-web-hint").textContent = s.braveSearchKeySet
       ? (s.braveSearchKeyEnv ? "Search key detected in your environment." : "Search key configured.")
       : "Page reading needs no key. Add a search key to enable web search.";
@@ -2236,6 +2249,7 @@
   $("set-browser-enabled").addEventListener("change", e => saveWebSettings({ browserEnabled: e.target.checked }));
   $("set-debug").addEventListener("change", e => saveWebSettings({ debug: e.target.checked }));
   $("set-plan").addEventListener("change", e => saveWebSettings({ planGate: e.target.checked }));
+  $("set-sandbox").addEventListener("change", e => saveWebSettings({ sandbox: e.target.value }));
   $("set-search-save").addEventListener("click", () => {
     const key = $("set-search-key").value.trim();
     if (key) saveWebSettings({ braveSearchKey: key });

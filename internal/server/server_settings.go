@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"os"
+	"runtime"
 	"strings"
 	"time"
 
@@ -168,6 +169,8 @@ func (s *Server) settingsPayload() map[string]any {
 	out["browserEnabled"] = cfg.BrowserEnabled
 	out["debug"] = cfg.Debug
 	out["planGate"] = cfg.PlanGate
+	out["sandbox"] = cfg.Sandbox
+	out["sandboxSupported"] = runtime.GOOS == "darwin" || runtime.GOOS == "linux"
 	out["braveSearchKeySet"] = cfg.SearchKey() != ""
 	out["braveSearchKeyEnv"] = os.Getenv("BRAVE_SEARCH_API_KEY") != ""
 	return out
@@ -191,6 +194,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		BraveSearchKey *string `json:"braveSearchKey"`
 		Debug          *bool   `json:"debug"`
 		PlanGate       *bool   `json:"planGate"`
+		Sandbox        *string `json:"sandbox"`
 	}
 	if !s.decode(w, r, &body) {
 		return
@@ -217,6 +221,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		case "ask", "auto", "yolo":
 		default:
 			http.Error(w, "approval must be ask, auto, or yolo", http.StatusBadRequest)
+			return
+		}
+	}
+	if body.Sandbox != nil {
+		switch *body.Sandbox = strings.TrimSpace(*body.Sandbox); *body.Sandbox {
+		case "off", "workspace", "strict":
+		default:
+			http.Error(w, "sandbox must be off, workspace, or strict", http.StatusBadRequest)
 			return
 		}
 	}
@@ -266,6 +278,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.PlanGate != nil {
 			c.PlanGate = *body.PlanGate
+		}
+		if body.Sandbox != nil {
+			c.Sandbox = *body.Sandbox
 		}
 	}
 	saved, err := config.LoadFile()

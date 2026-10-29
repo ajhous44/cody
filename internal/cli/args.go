@@ -22,6 +22,7 @@ type options struct {
 	watchStdin   bool
 	showThinking bool
 	plan         bool
+	sandbox      string
 	rebuild      bool
 	runs         int
 	task         string
@@ -75,6 +76,12 @@ func parseArgs(args []string) (options, error) {
 			o.showThinking = true
 		case a == "--plan":
 			o.plan = true
+		case a == "--sandbox":
+			v, err := need(a)
+			if err != nil {
+				return o, err
+			}
+			o.sandbox = v
 		case a == "--rerun":
 			o.rerun = true
 		case a == "--at":

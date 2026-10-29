@@ -437,7 +437,7 @@ func (e *Engine) installProvider(cfg *config.Config, p provider.Provider, model 
 	e.cfg, e.p, e.model = cfg, p, model
 	e.indexed = indexExists(e.root)
 	e.skills = discoverSkills(e.root)
-	system := prompt.Base(e.root) + prompt.Optional(cfg.WebEnabled, cfg.BrowserEnabled, cfg.PlanGate) + prompt.SkillsIndex(e.skills)
+	system := prompt.Base(e.root) + prompt.Optional(prompt.Opts{Web: cfg.WebEnabled, Browser: cfg.BrowserEnabled, Plan: cfg.PlanGate, Sandbox: cfg.Sandbox}) + prompt.SkillsIndex(e.skills)
 	e.ag = agent.New(agent.Options{
 		Provider: p, Model: model, System: system, Root: e.root, Tools: e.tools(),
 		Approver: e.approverFor(), ContextTokens: defaultBudget(p.Name()), Debug: cfg.Debug, RequirePlan: cfg.PlanGate,
@@ -484,7 +484,7 @@ func (e *Engine) tools() *tool.Registry {
 		tool.NewRead(e.root),
 		tool.NewWrite(e.root),
 		tool.NewEdit(e.root),
-		tool.NewBash(e.root),
+		tool.NewBash(e.root).WithSandbox(tool.Sandbox{Mode: e.cfg.Sandbox, Writable: e.cfg.SandboxWritable}),
 		tool.NewGrep(e.root),
 		tool.NewGlob(e.root),
 	}

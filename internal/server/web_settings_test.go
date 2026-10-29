@@ -150,3 +150,19 @@ func TestModelProbeUsesOllamaAutostart(t *testing.T) {
 		t.Fatalf("probe skipped autostart: %+v", ollama)
 	}
 }
+
+func TestSandboxSettingValidatedAndSaved(t *testing.T) {
+	ts, _ := newTestServer(t, &stubEngine{root: t.TempDir()})
+	resp := post(t, ts.URL+"/api/settings", "test-token", map[string]any{"sandbox": "everywhere"})
+	resp.Body.Close()
+	if resp.StatusCode != http.StatusBadRequest {
+		t.Fatalf("bad mode accepted: %d", resp.StatusCode)
+	}
+	resp = post(t, ts.URL+"/api/settings", "test-token", map[string]any{"sandbox": "strict"})
+	resp.Body.Close()
+	var live map[string]any
+	getJSON(t, ts.URL+"/api/settings", "test-token", &live)
+	if saved, _ := config.LoadFile(); live["sandbox"] != "strict" || saved.Sandbox != "strict" {
+		t.Fatalf("sandbox not applied and saved: %v / %+v", live["sandbox"], saved)
+	}
+}

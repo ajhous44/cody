@@ -37,6 +37,9 @@ type Config struct {
 	BraveSearchKey string              `json:"brave_search_key,omitempty"`
 	Debug          bool                `json:"debug,omitempty"`
 	PlanGate       bool                `json:"plan_gate,omitempty"`
+	// Sandbox confines shell commands: off, workspace, or strict.
+	Sandbox         string   `json:"sandbox,omitempty"`
+	SandboxWritable []string `json:"sandbox_writable,omitempty"`
 }
 
 func Dir() string {
@@ -105,6 +108,9 @@ func (c *Config) applyEnv() {
 	if v, err := strconv.ParseBool(os.Getenv("CODY_PLAN")); err == nil {
 		c.PlanGate = v
 	}
+	if v := os.Getenv("CODY_SANDBOX"); v != "" {
+		c.Sandbox = v
+	}
 	if v := os.Getenv("CODY_PROVIDER"); v != "" {
 		c.Provider = v
 	}
@@ -146,6 +152,7 @@ func (c *Config) normalize() {
 	if c.Provider == "" {
 		c.Provider = "ollama"
 	}
+	c.Sandbox = strings.ToLower(strings.TrimSpace(c.Sandbox))
 	switch c.Approval {
 	case "ask", "auto", "yolo":
 	default:

@@ -61,10 +61,24 @@ Rules:
 	return b.String()
 }
 
-// Optional returns rules for opt-in tools, so disabled ones cost no tokens.
-func Optional(web, browser, plan bool) string {
+// Opts are the opt-in features whose rules belong in the prompt.
+type Opts struct {
+	Web, Browser, Plan bool
+	Sandbox            string // off, workspace, or strict
+}
+
+// Optional returns rules for opt-in features, so disabled ones cost no tokens.
+func Optional(o Opts) string {
+	web, browser := o.Web, o.Browser
 	var b strings.Builder
-	if plan {
+	if o.Sandbox == "workspace" || o.Sandbox == "strict" {
+		b.WriteString("- Shell commands run in a sandbox: they can only write inside the workspace, temp, and\n  cache folders")
+		if o.Sandbox == "strict" {
+			b.WriteString(", with no network")
+		}
+		b.WriteString(". If a command needs more, say so instead of working around it.\n")
+	}
+	if o.Plan {
 		b.WriteString(`- Before changing anything (write, edit, bash, browser, web), call plan with 1-7
   short steps and wait for approval. Questions and read-only exploration need no
   plan. Call plan again before changing course.

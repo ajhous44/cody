@@ -45,6 +45,9 @@ type app struct {
 }
 
 func Run(args []string) int {
+	if len(args) > 0 && args[0] == tool.SandboxHelperArg {
+		return tool.RunSandboxHelper(args[1:]) // Linux: becomes the sandboxed bash
+	}
 	opts, err := parseArgs(args)
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "cody: "+err.Error())
@@ -166,6 +169,9 @@ func applyFlags(cfg *config.Config, opts options) {
 	}
 	if opts.plan {
 		cfg.PlanGate = true
+	}
+	if opts.sandbox != "" {
+		cfg.Sandbox = opts.sandbox
 	}
 }
 
@@ -840,6 +846,8 @@ flags:
       --yolo               shorthand for --approval yolo
       --show-thinking      print model reasoning traces (hidden by default)
       --plan               require an approved plan before any change
+      --sandbox MODE       off, workspace (shell writes only in the project,
+                           temp, and caches), or strict (also no network)
       --resume ID          resume a session by id (or "last")
       --allow-home         allow running with $HOME as the workspace
       --debug[=BOOL]       show raw provider errors and every retry
@@ -863,6 +871,6 @@ bench flags:
 config: ~/.cody/config.json
 env:    CODY_PROVIDER, CODY_MODEL, CODY_APPROVAL, CODY_API_KEY,
         CODY_NO_AUTOSTART, CODY_EMBED_PROVIDER, OLLAMA_HOST, OPENROUTER_API_KEY,
-        CODY_DEBUG, CODY_PLAN
+        CODY_DEBUG, CODY_PLAN, CODY_SANDBOX
 `)
 }
