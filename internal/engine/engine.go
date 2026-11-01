@@ -53,7 +53,7 @@ type Engine struct {
 	budgetReady bool
 	indexed     bool           // search is registered only when an index exists
 	skills      []prompt.Skill // skill index in the prompt; bodies load on demand
-	browser     *tool.Browser
+	browser     *tool.AgentCLI
 }
 
 func New(opts Options) (*Engine, error) {
@@ -445,7 +445,7 @@ func (e *Engine) installProvider(cfg *config.Config, p provider.Provider, model 
 	e.cfg, e.p, e.model = cfg, p, model
 	e.indexed = indexExists(e.root)
 	e.skills = discoverSkills(e.root)
-	system := prompt.Base(e.root) + prompt.Optional(prompt.Opts{Web: cfg.WebEnabled, Browser: cfg.BrowserEnabled, Plan: cfg.PlanGate, Sandbox: cfg.Sandbox}) + prompt.SkillsIndex(e.skills)
+	system := prompt.Base(e.root) + prompt.Optional(prompt.Opts{Web: cfg.WebEnabled, Browser: cfg.BrowserEnabled, Desktop: cfg.DesktopEnabled, Plan: cfg.PlanGate, Sandbox: cfg.Sandbox}) + prompt.SkillsIndex(e.skills)
 	e.ag = agent.New(agent.Options{
 		Provider: p, Model: model, System: system, Root: e.root, Tools: e.tools(),
 		Approver: e.approverFor(), ContextTokens: defaultBudget(p.Name()), Debug: cfg.Debug, RequirePlan: cfg.PlanGate,
@@ -475,7 +475,7 @@ func (e *Engine) approverFor() agent.Approver {
 		case "auto":
 			// auto covers file edits; anything that reaches outside the workspace still asks.
 			switch t.Name() {
-			case "bash", "browser", "web_fetch", "web_search":
+			case "bash", "browser", "desktop", "web_fetch", "web_search":
 			default:
 				return true, nil
 			}
@@ -513,12 +513,15 @@ func (e *Engine) tools() *tool.Registry {
 	}
 	if e.cfg.BrowserEnabled {
 		if e.browser == nil {
-			e.browser = tool.NewBrowser()
+			e.browser = tool.NewAgentBrowser(e.root)
 		}
 		tools = append(tools, e.browser)
 	} else if e.browser != nil {
 		e.browser.Close()
 		e.browser = nil
+	}
+	if e.cfg.DesktopEnabled {
+		tools = append(tools, tool.NewAgentDesktop(e.root))
 	}
 	return tool.NewRegistry(tools...)
 }

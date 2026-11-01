@@ -38,8 +38,13 @@ func TestWebSettingsAreIndependentAndKeysStayPrivate(t *testing.T) {
 	resp = post(t, ts.URL+"/api/settings", "test-token", map[string]any{"browserEnabled": true, "braveSearchKey": ""})
 	resp.Body.Close()
 	getJSON(t, ts.URL+"/api/settings", "test-token", &settings)
-	if settings["webEnabled"] != true || settings["browserEnabled"] != true || settings["braveSearchKeySet"] != false {
+	if settings["webEnabled"] != true || settings["browserEnabled"] != true || settings["desktopEnabled"] != false || settings["braveSearchKeySet"] != false {
 		t.Fatalf("unexpected settings: %+v", settings)
+	}
+	resp = post(t, ts.URL+"/api/settings", "test-token", map[string]any{"desktopEnabled": true})
+	resp.Body.Close()
+	if cfg, err := config.Load(); err != nil || !cfg.DesktopEnabled || !cfg.BrowserEnabled {
+		t.Fatal("desktop setting not persisted independently")
 	}
 	resp = post(t, ts.URL+"/api/settings", "test-token", map[string]any{"braveSearchKey": "bad\r\nheader"})
 	resp.Body.Close()
@@ -49,7 +54,7 @@ func TestWebSettingsAreIndependentAndKeysStayPrivate(t *testing.T) {
 }
 
 func TestDisablingWebToolsCancelsActiveTurn(t *testing.T) {
-	for _, feature := range []string{"webEnabled", "browserEnabled"} {
+	for _, feature := range []string{"webEnabled", "browserEnabled", "desktopEnabled"} {
 		t.Run(feature, func(t *testing.T) {
 			entered, stopped := make(chan struct{}), make(chan struct{})
 			eng := &stubEngine{root: t.TempDir(), send: func(ctx context.Context, _ string, _ agent.Handler) error {

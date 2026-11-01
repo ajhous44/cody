@@ -10,10 +10,10 @@ Runtime regression tests have passed on macOS (Apple Silicon) and Linux (ARM64 a
 
 ## Principles
 
-- **Seven core tools.** `read`, `write`, `edit`, `bash`, `grep`, `glob`, plus `search` once a workspace is indexed. Public web research and browser control are separate opt-ins, and tools that are off are never sent to the model; no plugin system.
+- **Seven core tools.** `read`, `write`, `edit`, `bash`, `grep`, `glob`, plus `search` once a workspace is indexed. Public web research, browser use, and desktop use are separate opt-ins, and tools that are off are never sent to the model; no plugin system.
 - **No hidden machinery.** No always-on indexing, no snapshot VCS, no background daemons. Git is the checkpoint. The semantic index is built explicitly with `cody index`, lives outside the repo, and stays optional.
 - **Context is a budget.** Tool output is capped, reads are paginated, and older context is summarized while preserving the current request and latest tool exchange.
-- **Append-only sessions.** JSONL on disk, resumable and replayable. Browser control additionally uses a temporary profile in the system temp directory, removed when its browser closes.
+- **Append-only sessions.** JSONL on disk, resumable and replayable.
 - **Local settings and sessions.** BYOK from env or `~/.cody/config.json` (0600 on Unix). No telemetry or Cody-hosted service. Hosted model providers receive the context sent to them; their retention policies apply.
 - **Subtraction cadence.** Every release asks what can be removed as models improve.
 
@@ -170,28 +170,33 @@ Drag the dividers to resize either sidebar (170–560px, remembered per browser)
 
 Security defaults: binds to loopback only, requires a per-run token on every API call, rejects foreign `Host` headers (DNS rebinding), and never trusts the browser with file access beyond the same workspace-bound tools. Binding to a non-loopback address prints a warning; anyone with the token URL can then use cody.
 
-### Optional web research and browser control
+### Optional web research, browser use, and desktop use
 
-Both features are off by default and work through the shared CLI/GUI engine. Enable them independently in Settings → web & browser, or with environment variables:
+All three are off by default and work through the shared CLI/GUI engine. Enable them independently in Settings → web, browser & desktop, or with environment variables:
 
 ```sh
 CODY_WEB=true cody "Read https://go.dev/doc/ and summarize the documentation"
 # Set BRAVE_SEARCH_API_KEY in your environment to also enable web_search.
 CODY_BROWSER=true cody "Open http://localhost:3000 and check the homepage"
+CODY_DESKTOP=true cody "In Notes, create a note titled Groceries"
 ```
 
 - `web_fetch` reads public HTTP(S) pages into bounded text with source links. It needs no API key, browser, or OS computer-use permission. Each fetch requires approval in `ask` and `auto` modes, since a URL can carry workspace data off the machine. It does not execute JavaScript, reuse cookies, or access private/local addresses. Responses are capped at 2 MiB and each excerpt at 4,000 characters. Longer pages return a character offset for the next excerpt.
 - `web_search` returns up to five results through the [Brave Search API](https://api-dashboard.search.brave.com/documentation/guides/authentication). It appears only when web research is enabled and a key is configured. Queries go to Brave and require approval in `ask` and `auto` modes; you supply your own key and are responsible for any API charges. The key is stored locally or read from `BRAVE_SEARCH_API_KEY`, never returned through the settings API.
-- `browser` starts your installed Chrome/Chromium or Edge in a visible window with a separate, temporary profile. It supports opening a URL, reading page text, clicking an observed element, filling text fields, pressing a small set of keys, going back, and closing. It can reach local development servers. Actions require approval in `ask` and `auto` modes; `yolo` skips approval. No macOS Accessibility or Screen Recording permission is needed.
+- `browser` runs [agent-browser](https://github.com/vercel-labs/agent-browser) and `desktop` runs [agent-desktop](https://github.com/vercel-labs/agent-desktop), Vercel Labs' Apache-2.0 CLIs for agents. Install them separately with `npm install -g agent-browser agent-desktop`; cody does not bundle or patch them, so `npm update -g` (or `agent-browser upgrade`) upgrades them with no cody release.
 
-Browser control uses Chrome's debugging pipe, with no listening debugging port, bundled browser, browser extension, or Node runtime. Set `CODY_BROWSER_PATH` to a browser executable if automatic discovery does not find it. It does not attach to normal tabs or logins, automate passwords or uploads, or permit downloads. Sign in manually in its separate window if needed. The temporary profile closes with its engine or when you disable the feature.
+Each call runs one CLI command, passed through unchanged with the workspace as its working directory, and returns the CLI's own output (capped at 12,000 characters). The model learns the commands from each CLI's built-in guide (`skills get core`, `skills get desktop`), so new CLI features work as soon as you upgrade. Every command requires approval in `ask` and `auto` modes and shows the exact command line; `yolo` skips approval.
 
-This first version controls one page through bounded DOM text excerpts and up to 30 element references. Safari, full desktop control, screenshots/vision, canvas interactions, and iframe traversal are not included. Page contents are untrusted input; inspect actions before approving consequential submissions. Disabling either feature in settings cancels active turns before applying the change. Saved settings also apply to future CLI runs.
+- **Browser:** each engine gets its own agent-browser session (`--session cody-…`) in a headless Chrome with a temporary profile, closed with the engine or when you disable the feature. agent-browser finds an installed Chrome, or run `agent-browser install`. Its defaults apply: downloads go to your Downloads folder and the project's `agent-browser.json` is read; configure either in `~/.agent-browser/config.json`.
+- **Desktop:** agent-desktop reads and operates apps through the OS accessibility tree, headless by default (no pointer movement or focus changes). On macOS, grant Accessibility to the app that runs cody (`agent-desktop permissions --guide`); Linux needs `at-spi2-core`. Snapshots can include private content from any app, and they are sent to your model provider.
+- **Windows:** npm installs `.cmd` shims, which cody refuses because `cmd.exe` re-parses arguments. Put the native `agent-browser.exe` / `agent-desktop.exe` from each project's GitHub release first on `PATH`.
 
-Optional integration tests use a disposable headless profile and a public documentation page:
+Page and app contents are untrusted input; inspect actions before approving consequential submissions. Disabling a feature in settings cancels active turns before applying the change. Saved settings also apply to future CLI runs.
+
+Optional integration tests drive the installed CLIs and a public documentation page:
 
 ```sh
-CODY_BROWSER_TEST=1 CODY_WEB_TEST=1 go test ./internal/tool -run 'TestBrowser|TestWebFetch'
+CODY_AGENT_CLI_TEST=1 CODY_WEB_TEST=1 go test ./internal/tool -run 'TestAgentCLIsLive|TestWebFetch'
 ```
 
 ### macOS app
@@ -311,7 +316,7 @@ cody index
 }
 ```
 
-Environment overrides: `CODY_PROVIDER`, `CODY_MODEL`, `CODY_APPROVAL`, `CODY_API_KEY`, `CODY_NO_AUTOSTART`, `CODY_EMBED_PROVIDER`, `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, `CODY_PLAN`, `CODY_SANDBOX`, `CODY_PLAIN`, `BRAVE_SEARCH_API_KEY`. `CODY_WEB`, `CODY_BROWSER`, `CODY_DEBUG`, and `CODY_PLAN` accept `true`/`false` or `1`/`0`. Debug mode (also `--debug[=BOOL]` or the GUI settings toggle) appends the provider's raw status and message to errors and lists every retry. Overrides apply only to the running process; saving GUI settings writes just the values you changed, so environment values and env-provided keys never reach `config.json`. `CODY_CONFIG_DIR` overrides the default `~/.cody` directory for settings, sessions, and indexes.
+Environment overrides: `CODY_PROVIDER`, `CODY_MODEL`, `CODY_APPROVAL`, `CODY_API_KEY`, `CODY_NO_AUTOSTART`, `CODY_EMBED_PROVIDER`, `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `CODY_WEB`, `CODY_BROWSER`, `CODY_DESKTOP`, `CODY_DEBUG`, `CODY_PLAN`, `CODY_SANDBOX`, `CODY_PLAIN`, `BRAVE_SEARCH_API_KEY`. `CODY_WEB`, `CODY_BROWSER`, `CODY_DESKTOP`, `CODY_DEBUG`, and `CODY_PLAN` accept `true`/`false` or `1`/`0`. Debug mode (also `--debug[=BOOL]` or the GUI settings toggle) appends the provider's raw status and message to errors and lists every retry. Overrides apply only to the running process; saving GUI settings writes just the values you changed, so environment values and env-provided keys never reach `config.json`. `CODY_CONFIG_DIR` overrides the default `~/.cody` directory for settings, sessions, and indexes.
 
 Any OpenAI-compatible endpoint works as an extra provider: add a `providers.<name>.base_url` entry and pass `-p <name>`.
 

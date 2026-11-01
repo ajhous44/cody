@@ -450,7 +450,7 @@
         </section>
 
         <section class="settings-section">
-          <h3>web &amp; browser</h3>
+          <h3>web, browser &amp; desktop</h3>
           <label class="check"><input type="checkbox" id="set-web-enabled">Web research</label>
           <p class="hint">Reads public pages. Search needs a Brave key; queries go to Brave.</p>
           <div class="row">
@@ -460,8 +460,10 @@
           </div>
           <p class="hint" id="set-web-hint" role="status"></p>
           <label class="check"><input type="checkbox" id="set-browser-enabled">Browser control</label>
-          <p class="hint">Isolated Chrome/Edge window with a temporary profile. Asks before each action unless yolo.</p>
-          <p class="hint">Toggling either stops active turns.</p>
+          <p class="hint">Runs agent-browser (npm i -g agent-browser) in its own headless session. Asks before each command unless yolo.</p>
+          <label class="check"><input type="checkbox" id="set-desktop-enabled">Desktop control</label>
+          <p class="hint">Runs agent-desktop (npm i -g agent-desktop) on your apps; needs Accessibility permission on macOS. Asks before each command unless yolo.</p>
+          <p class="hint">Toggling any stops active turns.</p>
         </section>
 
         <section class="settings-section">
@@ -1712,6 +1714,7 @@
     $("set-approval").value = s.approval || "ask";
     $("set-web-enabled").checked = !!s.webEnabled;
     $("set-browser-enabled").checked = !!s.browserEnabled;
+    $("set-desktop-enabled").checked = !!s.desktopEnabled;
     $("set-debug").checked = !!s.debug;
     $("set-plan").checked = !!s.planGate;
     $("set-sandbox").value = s.sandbox || "off";
@@ -2247,6 +2250,7 @@
   }
   $("set-web-enabled").addEventListener("change", e => saveWebSettings({ webEnabled: e.target.checked }));
   $("set-browser-enabled").addEventListener("change", e => saveWebSettings({ browserEnabled: e.target.checked }));
+  $("set-desktop-enabled").addEventListener("change", e => saveWebSettings({ desktopEnabled: e.target.checked }));
   $("set-debug").addEventListener("change", e => saveWebSettings({ debug: e.target.checked }));
   $("set-plan").addEventListener("change", e => saveWebSettings({ planGate: e.target.checked }));
   $("set-sandbox").addEventListener("change", e => saveWebSettings({ sandbox: e.target.value }));

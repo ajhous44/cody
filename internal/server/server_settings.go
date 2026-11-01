@@ -167,6 +167,7 @@ func (s *Server) settingsPayload() map[string]any {
 	out["openrouterKeyEnv"] = os.Getenv("OPENROUTER_API_KEY") != "" || os.Getenv("CODY_API_KEY") != ""
 	out["webEnabled"] = cfg.WebEnabled
 	out["browserEnabled"] = cfg.BrowserEnabled
+	out["desktopEnabled"] = cfg.DesktopEnabled
 	out["debug"] = cfg.Debug
 	out["planGate"] = cfg.PlanGate
 	out["sandbox"] = cfg.Sandbox
@@ -191,6 +192,7 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		OpenRouterKey  *string `json:"openrouterKey"`
 		WebEnabled     *bool   `json:"webEnabled"`
 		BrowserEnabled *bool   `json:"browserEnabled"`
+		DesktopEnabled *bool   `json:"desktopEnabled"`
 		BraveSearchKey *string `json:"braveSearchKey"`
 		Debug          *bool   `json:"debug"`
 		PlanGate       *bool   `json:"planGate"`
@@ -207,7 +209,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	disableTools := (body.WebEnabled != nil && !*body.WebEnabled && cfg.WebEnabled) ||
-		(body.BrowserEnabled != nil && !*body.BrowserEnabled && cfg.BrowserEnabled)
+		(body.BrowserEnabled != nil && !*body.BrowserEnabled && cfg.BrowserEnabled) ||
+		(body.DesktopEnabled != nil && !*body.DesktopEnabled && cfg.DesktopEnabled)
 	if body.Provider != nil {
 		p := strings.ToLower(strings.TrimSpace(*body.Provider))
 		if p != "ollama" && p != "openrouter" && cfg.ProviderConfig(p).BaseURL == "" {
@@ -269,6 +272,9 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.BrowserEnabled != nil {
 			c.BrowserEnabled = *body.BrowserEnabled
+		}
+		if body.DesktopEnabled != nil {
+			c.DesktopEnabled = *body.DesktopEnabled
 		}
 		if body.BraveSearchKey != nil {
 			c.BraveSearchKey = *body.BraveSearchKey

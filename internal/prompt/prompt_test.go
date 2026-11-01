@@ -142,17 +142,20 @@ func TestOptionalRulesOnlyForEnabledTools(t *testing.T) {
 	if got := Optional(Opts{Sandbox: "off"}); got != "" {
 		t.Fatalf("disabled tools should add no rules:\n%s", got)
 	}
-	web, browser := Optional(Opts{Web: true}), Optional(Opts{Browser: true})
+	web, browser, desktop := Optional(Opts{Web: true}), Optional(Opts{Browser: true}), Optional(Opts{Desktop: true})
 	if plan := Optional(Opts{Plan: true}); !strings.Contains(plan, "call plan") || strings.Contains(plan, "untrusted") {
 		t.Fatalf("plan rules wrong:\n%s", plan)
 	}
 	if sb := Optional(Opts{Sandbox: "strict"}); !strings.Contains(sb, "sandbox") || !strings.Contains(sb, "no network") {
 		t.Fatalf("sandbox rules wrong:\n%s", sb)
 	}
-	if !strings.Contains(web, "web_fetch") || strings.Contains(web, "refs from") || !strings.Contains(web, "untrusted") {
+	if !strings.Contains(web, "web_fetch") || strings.Contains(web, "agent-") || !strings.Contains(web, "untrusted") {
 		t.Fatalf("web rules wrong:\n%s", web)
 	}
-	if !strings.Contains(browser, "refs from") || strings.Contains(browser, "web_fetch") || !strings.Contains(browser, "untrusted") {
+	if !strings.Contains(browser, "agent-browser") || strings.Contains(browser, "agent-desktop") || !strings.Contains(browser, "untrusted") {
 		t.Fatalf("browser rules wrong:\n%s", browser)
+	}
+	if !strings.Contains(desktop, "agent-desktop") || strings.Contains(desktop, "agent-browser") || !strings.Contains(desktop, "untrusted") {
+		t.Fatalf("desktop rules wrong:\n%s", desktop)
 	}
 }

@@ -34,6 +34,7 @@ type Config struct {
 	Providers      map[string]Provider `json:"providers"`
 	WebEnabled     bool                `json:"web_enabled,omitempty"`
 	BrowserEnabled bool                `json:"browser_enabled,omitempty"`
+	DesktopEnabled bool                `json:"desktop_enabled,omitempty"`
 	BraveSearchKey string              `json:"brave_search_key,omitempty"`
 	Debug          bool                `json:"debug,omitempty"`
 	PlanGate       bool                `json:"plan_gate,omitempty"`
@@ -101,6 +102,9 @@ func (c *Config) applyEnv() {
 	}
 	if v, err := strconv.ParseBool(os.Getenv("CODY_BROWSER")); err == nil {
 		c.BrowserEnabled = v
+	}
+	if v, err := strconv.ParseBool(os.Getenv("CODY_DESKTOP")); err == nil {
+		c.DesktopEnabled = v
 	}
 	if v, err := strconv.ParseBool(os.Getenv("CODY_DEBUG")); err == nil {
 		c.Debug = v

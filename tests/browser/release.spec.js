@@ -159,12 +159,13 @@ test('compact approval dock retains details, survives reload, and supports denia
 });
 
 
-test('web and browser opt-ins stay independent and search keys never return to the page', async ({ page }) => {
+test('web, browser, and desktop opt-ins stay independent and search keys never return to the page', async ({ page }) => {
   await page.goto('/?token=browser-test');
   await page.locator('#open-settings').click();
-  const web = page.locator('#set-web-enabled'), browser = page.locator('#set-browser-enabled');
+  const web = page.locator('#set-web-enabled'), browser = page.locator('#set-browser-enabled'), desktop = page.locator('#set-desktop-enabled');
   await expect(web).not.toBeChecked();
   await expect(browser).not.toBeChecked();
+  await expect(desktop).not.toBeChecked();
   await web.check();
   await expect(browser).not.toBeChecked();
   await page.locator('#set-search-key').fill('test-brave-secret');
@@ -189,6 +190,16 @@ test('web and browser opt-ins stay independent and search keys never return to t
   await page.locator('#open-settings').click();
   await expect(web).not.toBeChecked();
   await expect(browser).toBeChecked();
+  await expect(desktop).not.toBeChecked();
+  await Promise.all([
+    page.waitForResponse(r => r.url().endsWith('/api/settings') && r.request().method() === 'POST'),
+    desktop.check(),
+  ]);
+  await page.reload();
+  await page.locator('#open-settings').click();
+  await expect(desktop).toBeChecked();
+  await expect(browser).toBeChecked();
+  await desktop.uncheck();
   await browser.uncheck();
   await page.locator('#set-search-clear').click();
   await expect(page.locator('#set-web-hint')).toContainText('Add a search key');

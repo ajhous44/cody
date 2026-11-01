@@ -6,12 +6,13 @@ func TestWebConfigOptInAndEnvironment(t *testing.T) {
 	t.Setenv("CODY_CONFIG_DIR", t.TempDir())
 	t.Setenv("CODY_WEB", "")
 	t.Setenv("CODY_BROWSER", "")
+	t.Setenv("CODY_DESKTOP", "")
 	t.Setenv("BRAVE_SEARCH_API_KEY", "")
 	cfg, err := Load()
 	if err != nil {
 		t.Fatal(err)
 	}
-	if cfg.WebEnabled || cfg.BrowserEnabled || cfg.SearchKey() != "" {
+	if cfg.WebEnabled || cfg.BrowserEnabled || cfg.DesktopEnabled || cfg.SearchKey() != "" {
 		t.Fatal("web features enabled by default")
 	}
 	cfg.WebEnabled = true
@@ -25,9 +26,10 @@ func TestWebConfigOptInAndEnvironment(t *testing.T) {
 	}
 	t.Setenv("CODY_WEB", "false")
 	t.Setenv("CODY_BROWSER", "true")
+	t.Setenv("CODY_DESKTOP", "1")
 	t.Setenv("BRAVE_SEARCH_API_KEY", "env-test-key")
 	cfg, err = Load()
-	if err != nil || cfg.WebEnabled || !cfg.BrowserEnabled || cfg.SearchKey() != "env-test-key" {
+	if err != nil || cfg.WebEnabled || !cfg.BrowserEnabled || !cfg.DesktopEnabled || cfg.SearchKey() != "env-test-key" {
 		t.Fatalf("env config err=%v", err)
 	}
 	if cfg.Clone().BraveSearchKey != "stored-test-key" {

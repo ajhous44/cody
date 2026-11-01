@@ -17,10 +17,10 @@ import (
 	"github.com/ajhous44/cody/v3/internal/tool"
 )
 
-func TestOptionalWebToolRegistrationAndBrowserApproval(t *testing.T) {
+func TestOptionalWebBrowserDesktopRegistrationAndApproval(t *testing.T) {
 	t.Setenv("BRAVE_SEARCH_API_KEY", "")
 	e := &Engine{cfg: config.Default(), root: t.TempDir()}
-	for _, name := range []string{"web_fetch", "web_search", "browser"} {
+	for _, name := range []string{"web_fetch", "web_search", "browser", "desktop"} {
 		if _, ok := e.tools().Get(name); ok {
 			t.Fatalf("%s enabled by default", name)
 		}
@@ -33,15 +33,15 @@ func TestOptionalWebToolRegistrationAndBrowserApproval(t *testing.T) {
 		t.Fatal("search exposed without key")
 	}
 	e.cfg.BraveSearchKey = "fixture-secret"
-	e.cfg.BrowserEnabled = true
+	e.cfg.BrowserEnabled, e.cfg.DesktopEnabled = true, true
 	registry := e.tools()
-	for _, name := range []string{"web_fetch", "web_search", "browser"} {
+	for _, name := range []string{"web_fetch", "web_search", "browser", "desktop"} {
 		if _, ok := registry.Get(name); !ok {
 			t.Fatalf("missing %s", name)
 		}
 	}
 	// Every tool that reaches outside the workspace asks in ask and auto modes.
-	for _, name := range []string{"web_fetch", "web_search", "browser"} {
+	for _, name := range []string{"web_fetch", "web_search", "browser", "desktop"} {
 		item, _ := registry.Get(name)
 		if !item.Mutating() {
 			t.Fatalf("%s bypasses approval", name)
