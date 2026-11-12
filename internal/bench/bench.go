@@ -26,6 +26,13 @@ type Options struct {
 	JSON         bool
 	Out          io.Writer
 	Progress     io.Writer
+
+	// Suite mode summarizes per task (medians), can save the report, and
+	// fails on regressions against a saved baseline report.
+	Suite    bool
+	Save     string
+	Baseline string
+	Version  string
 }
 
 type Result struct {
@@ -74,6 +81,14 @@ func Run(ctx context.Context, opts Options, tasks []Task) error {
 	if opts.Runs < 1 {
 		opts.Runs = 1
 	}
+	var base *Report
+	if opts.Baseline != "" { // fail before spending any model time
+		b, err := loadReport(opts.Baseline)
+		if err != nil {
+			return err
+		}
+		base = &b
+	}
 	model := opts.Model
 	if model == "" {
 		if opts.ProviderName != "ollama" {
@@ -107,12 +122,42 @@ func Run(ctx context.Context, opts Options, tasks []Task) error {
 			}
 		}
 	}
+	if !opts.Suite {
+		if opts.JSON {
+			enc := json.NewEncoder(opts.Out)
+			enc.SetIndent("", "  ")
+			return enc.Encode(results)
+		}
+		summarize(opts.Out, results)
+		return nil
+	}
+	rep := newReport(opts, model, opts.Runs, results)
+	if opts.Save != "" {
+		b, _ := json.MarshalIndent(rep, "", "  ")
+		if err := os.WriteFile(opts.Save, append(b, '\n'), 0o644); err != nil {
+			return err
+		}
+	}
+	notes := opts.Out
 	if opts.JSON {
+		notes = opts.Progress // keep stdout pure JSON
 		enc := json.NewEncoder(opts.Out)
 		enc.SetIndent("", "  ")
-		return enc.Encode(results)
+		if err := enc.Encode(rep); err != nil {
+			return err
+		}
+	} else {
+		printSummary(opts.Out, rep)
 	}
-	summarize(opts.Out, results)
+	if base != nil {
+		if regs := Compare(notes, *base, rep); len(regs) > 0 {
+			for _, r := range regs {
+				fmt.Fprintln(notes, "regression: "+r)
+			}
+			return fmt.Errorf("%d regression(s) against %s", len(regs), opts.Baseline)
+		}
+		fmt.Fprintln(notes, "no regressions")
+	}
 	return nil
 }
 

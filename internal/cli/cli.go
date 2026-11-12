@@ -809,12 +809,20 @@ func cmdBench(opts options) int {
 	}
 	ctx, cancel := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer cancel()
+	runs := opts.runs
+	if opts.suite && !opts.runsSet {
+		runs = 3 // medians need more than one sample
+	}
 	err = bench.Run(ctx, bench.Options{
 		ProviderName: name,
 		BaseURL:      base,
 		APIKey:       cfg.Key(name),
 		Model:        cfg.Model,
-		Runs:         opts.runs,
+		Runs:         runs,
+		Suite:        opts.suite,
+		Save:         opts.save,
+		Baseline:     opts.baseline,
+		Version:      Version,
 		Keep:         opts.keep,
 		JSON:         opts.jsonOut,
 		Out:          os.Stdout,
@@ -916,6 +924,10 @@ bench flags:
       --list               list benchmark tasks
       --keep               keep temporary task directories
       --json               print machine-readable results
+      --suite              every task, 3 runs each (or --runs), per-task medians
+      --save FILE          write the suite report as JSON
+      --baseline FILE      compare with a saved report; exit 1 on a regression
+                           (pass rate drop, or median tokens in up more than 10%)
 
 config: ~/.cody/config.json
 env:    CODY_PROVIDER, CODY_MODEL, CODY_APPROVAL, CODY_API_KEY,

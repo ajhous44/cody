@@ -138,7 +138,7 @@ func (a *Agent) summarize(ctx context.Context, opts Options, previous string, hi
 			}
 		}
 		stream, err := opts.Provider.Stream(ctx, provider.Request{
-			Model: opts.Model, MaxOutputTokens: output,
+			Model: opts.Model, MaxOutputTokens: output, NoReasoning: true,
 			Messages: []provider.Message{
 				{Role: "system", Content: summaryPrompt},
 				{Role: "user", Content: "Previous summary:\n" + previous + "\nTranscript (may continue in the next batch):\n" + remaining[:end]},

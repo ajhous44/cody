@@ -25,6 +25,10 @@ type options struct {
 	sandbox      string
 	plain        bool // line input without the editor, picker, or live status
 	pickResume   bool // `cody resume` without an id: pick one on a terminal
+	suite        bool
+	runsSet      bool
+	save         string
+	baseline     string
 	rebuild      bool
 	runs         int
 	task         string
@@ -84,6 +88,18 @@ func parseArgs(args []string) (options, error) {
 				return o, err
 			}
 			o.sandbox = v
+		case a == "--suite":
+			o.suite = true
+		case a == "--save" || a == "--baseline":
+			v, err := need(a)
+			if err != nil {
+				return o, err
+			}
+			if a == "--save" {
+				o.save = v
+			} else {
+				o.baseline = v
+			}
 		case a == "--plain":
 			o.plain = true
 		case a == "--rerun":
@@ -161,6 +177,7 @@ func parseArgs(args []string) (options, error) {
 				return o, fmt.Errorf("--runs must be a positive integer")
 			}
 			o.runs = n
+			o.runsSet = true
 		case strings.HasPrefix(a, "--"):
 			return o, fmt.Errorf("unknown flag %s", a)
 		default:

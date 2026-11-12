@@ -39,6 +39,7 @@ type FuncSpec struct {
 type Request struct {
 	CacheKey        string
 	MaxOutputTokens int
+	NoReasoning     bool // bookkeeping calls such as summaries skip model thinking
 	OnRetry         func(time.Duration)
 	Model           string
 	Messages        []Message

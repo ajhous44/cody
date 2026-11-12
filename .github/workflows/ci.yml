@@ -38,6 +38,14 @@ jobs:
       - name: Installers
         run: bash tests/install/test.sh
 
+      - name: Size budget
+        if: runner.os == 'Linux'
+        run: |
+          go build -trimpath -ldflags="-s -w" -o "$RUNNER_TEMP/cody" .
+          size=$(stat -c %s "$RUNNER_TEMP/cody")
+          echo "release binary: $size bytes (budget 16 MiB, see PERFORMANCE.md)"
+          test "$size" -le 16777216
+
       - name: Container profile
         if: runner.os == 'Linux'
         run: |

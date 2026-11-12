@@ -52,6 +52,7 @@ type chatRequest struct {
 	CacheControl        map[string]string `json:"cache_control,omitempty"`
 	MaxTokens           int               `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int               `json:"max_completion_tokens,omitempty"`
+	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`
 	Model               string            `json:"model"`
 	Messages            []Message         `json:"messages"`
 	Tools               []ToolSpec        `json:"tools,omitempty"`
@@ -72,6 +73,12 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (Stream, error) {
 		payload.MaxCompletionTokens = req.MaxOutputTokens
 	} else {
 		payload.MaxTokens = req.MaxOutputTokens
+	}
+	// Thinking models can spend the whole output limit reasoning and return no text.
+	// ponytail: only Ollama is verified to accept "none" (older versions ignore it);
+	// OpenAI rejects it on some models and OpenRouter spells it differently.
+	if req.NoReasoning && o.name == "ollama" {
+		payload.ReasoningEffort = "none"
 	}
 	if req.CacheKey != "" {
 		switch o.name {

@@ -58,11 +58,14 @@ func TestPromptCacheWireAndUsage(t *testing.T) {
 				if payload[key] != float64(123) {
 					t.Errorf("output limit: %v", payload)
 				}
+				if (payload["reasoning_effort"] == "none") != (tc.name == "ollama") {
+					t.Errorf("reasoning off only where verified: %v", payload)
+				}
 				fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3000,\"prompt_tokens_details\":{\"cached_tokens\":2000,\"cache_write_tokens\":500}}}\n\ndata: [DONE]\n\n")
 			}))
 			defer srv.Close()
 			p := NewOpenAI(tc.name, srv.URL, "")
-			s, err := p.Stream(context.Background(), Request{Model: tc.model, CacheKey: "opaque-session", MaxOutputTokens: 123, Messages: []Message{{Role: "user", Content: "hello"}}})
+			s, err := p.Stream(context.Background(), Request{Model: tc.model, CacheKey: "opaque-session", MaxOutputTokens: 123, NoReasoning: true, Messages: []Message{{Role: "user", Content: "hello"}}})
 			if err != nil {
 				t.Fatal(err)
 			}

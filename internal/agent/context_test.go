@@ -55,6 +55,10 @@ func TestCompactionPreservesRequestToolsAndJournal(t *testing.T) {
 	if last.MaxOutputTokens != 1024 {
 		t.Fatalf("output budget %d", last.MaxOutputTokens)
 	}
+	// Summaries skip thinking, which can use the whole limit; the turn keeps it.
+	if !p.reqs[0].NoReasoning || last.NoReasoning {
+		t.Fatalf("reasoning: summary %v, turn %v", p.reqs[0].NoReasoning, last.NoReasoning)
+	}
 	// No second compaction while the compacted view still fits.
 	p.script = [][]provider.Delta{{{Content: "next"}}}
 	if _, err := a.Prompt(context.Background(), "continue", nil); err != nil {

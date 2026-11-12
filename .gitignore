@@ -39,3 +39,6 @@ playwright-report/
 
 # Private planning documents (not part of the public repository)
 /docs/
+
+# Claude Code session files (local tool state, not part of the project)
+.claude/

@@ -2,7 +2,7 @@
 
 A small coding agent for the terminal. One Go binary, no runtime dependencies, seven core tools, optional web tools, append-only sessions. Built for fast cold start and low context tax on local models (Ollama) and hosted ones (OpenRouter).
 
-**Status:** v3.0.0 development (unreleased). Interactive CLI, one-shot runs, sessions, a local-model benchmark suite, a multi-project web GUI (`cody serve`), and a macOS app.
+**Status:** v3.0.0. Interactive CLI, one-shot runs, sessions, a local-model benchmark suite, a multi-project web GUI (`cody serve`), and a macOS app.
 
 The CLI and browser GUI are built for macOS, Windows, and Linux. The native app is macOS-only. The `bash` tool uses Bash on macOS/Linux and PowerShell on Windows; Git is needed for change previews.
 
@@ -21,7 +21,7 @@ Runtime regression tests have passed on macOS (Apple Silicon) and Linux (ARM64 a
 
 Building from source requires Go 1.27.2 or newer. CI and release builds use the version in `go.mod`.
 
-Version 3 is not published yet. The existing v1/v2 releases are the older Python application. Until v3 is published, build from this v3 checkout:
+The v1/v2 releases are the older Python application. To build v3 from a checkout:
 
 ```sh
 make build            # builds ./cody
@@ -29,7 +29,7 @@ make check            # gofmt, vet, tests
 ./cody version
 ```
 
-After v3.0.0 is published, the one-line installers download the latest release for your OS and CPU, verify it against the release's `checksums.txt`, and install the `cody` CLI (which includes the browser GUI). Neither needs admin rights.
+The one-line installers download the latest release for your OS and CPU, verify it against the release's `checksums.txt`, and install the `cody` CLI (which includes the browser GUI). Neither needs admin rights.
 
 macOS and Linux (installs to `~/.local/bin`):
 
@@ -367,9 +367,19 @@ cody bench                       # all tasks, smallest local model
 cody bench --task fix-test -m gemma4:e4b
 cody bench --list                # tasks + local models
 cody bench --json                # machine-readable results
+cody bench --suite --save s.json # per-task medians, saved for later comparison
 ```
 
 Reported per task: pass/fail, wall time, time to first output, tokens in/out, tokens/sec, tool calls. `tokens_in` is the full context bill per request, including system prompt and tool schemas, so the harness tax is visible.
+
+For regression tracking, `--suite` runs every task three times (or `--runs N`) and reports per-task pass rate and medians, so one slow run cannot skew the result:
+
+```sh
+cody bench --suite -m gemma4:e4b --save baseline.json      # record a baseline
+cody bench --suite -m gemma4:e4b --baseline baseline.json  # compare a later build
+```
+
+A comparison exits with status 1 when a task's pass rate drops or its median input tokens grow by more than 10%; wall time is shown but never fails, since machine load makes it noisy. Saved reports include the cody version, provider, model, and platform. [PERFORMANCE.md](PERFORMANCE.md) lists the budgets CI enforces without a model (binary size, per-request prompt overhead) and recent measurements.
 
 Example (Apple Silicon, Ollama, `fix-test`): `gemma4:e4b` — pass, 110s, 25.4 tok/s, 8 tool calls; `qwen3.5-abliterated:9b` — 6 tool calls and a green test suite in some runs.
 
@@ -429,7 +439,7 @@ Clients never own the model loop. The CLI and the web GUI both drive `internal/e
 - [x] Document installation, configuration, and usage.
 - [x] Add contribution guidance.
 - [x] Add CI checks for pull requests.
-- [ ] Publish the v3 rewrite on GitHub and accept PRs.
+- [x] Publish the v3 rewrite on GitHub and accept PRs.
 
 ### Phase 3 - Later, only if it earns its place
 
@@ -439,7 +449,7 @@ Clients never own the model loop. The CLI and the web GUI both drive `internal/e
 - [ ] Anthropic provider adapter.
 - [x] OS-level sandbox profile and a documented container profile.
 - [x] Optional skills directory with lazy loading (no always-on MCP).
-- [ ] `cody bench --suite` for regression tracking and a PERFORMANCE.md with measured budgets.
+- [x] `cody bench --suite` for regression tracking and a PERFORMANCE.md with measured budgets.
 - [x] Session fork/replay-from-message.
 
 Deliberately out of scope: multi-agent swarms, always-on MCP bundles, whole-tree indexing, internal snapshot VCS, telemetry.
