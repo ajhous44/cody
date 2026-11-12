@@ -196,3 +196,45 @@ func TestCalibrateFollowsRealTokenCounts(t *testing.T) {
 		t.Fatalf("scale %.2f, want 1", a.scale)
 	}
 }
+
+type pageTool struct{ echoTool }
+
+func (pageTool) Name() string { return "browser" }
+func (pageTool) Page(result string) (listing, whole bool) {
+	return strings.Contains(result, "ref=e"), strings.HasPrefix(result, "page")
+}
+
+// On a small window a few page listings are the whole budget. Listings that a
+// later whole page replaced are dropped from the model's view before any
+// summary is paid for; text read from a page, and the journal, are kept.
+func TestStalePageListingsAreDroppedBeforeSummarizing(t *testing.T) {
+	p := &fakeProvider{script: [][]provider.Delta{{{Content: "done"}}}}
+	a := New(Options{Provider: p, Model: "test", System: "system", Tools: tool.NewRegistry(&pageTool{})})
+	big := strings.Repeat(" [ref=e1] link", 200) // ~700 estimated tokens each
+	history := []provider.Message{{Role: "user", Content: "find it"}}
+	for i, content := range []string{"page one" + big, "Changed:" + big, "the text I read", "page two" + big, "Changed: [ref=e2]"} {
+		id := string(rune('a' + i))
+		history = append(history,
+			provider.Message{Role: "assistant", ToolCalls: []provider.ToolCall{{ID: id, Type: "function", Function: provider.Func{Name: "browser", Arguments: "{}"}}}},
+			provider.Message{Role: "tool", ToolCallID: id, Name: "browser", Content: content})
+	}
+	a.SetHistory(history)
+	a.SetLimits(3000, 0) // three listings do not fit; one does
+	if _, err := a.Prompt(context.Background(), "and then?", nil); err != nil {
+		t.Fatal(err)
+	}
+	sent := p.reqs[0].Messages
+	var tools []string
+	for _, m := range sent {
+		if m.Role == "tool" {
+			tools = append(tools, m.Content[:min(len(m.Content), 12)])
+		}
+	}
+	want := []string{"[earlier pag", "[earlier pag", "the text I r", "page two [re", "Changed: [re"}
+	if len(p.reqs) != 1 || !reflect.DeepEqual(tools, want) {
+		t.Fatalf("%d requests (a summary costs one more); model saw %q, want %q", len(p.reqs), tools, want)
+	}
+	if got := a.History()[2].Content; !strings.HasPrefix(got, "page one") {
+		t.Fatalf("journal changed: %.20q", got)
+	}
+}

@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"slices"
 	"strings"
 	"testing"
 )
@@ -31,10 +32,10 @@ echo "$PWD|$*" >> %q
 case "$*" in
 *boom*) echo 'boom failed'; exit 3;;
 *"click @e5"*) echo data > report.txt;;
-*"select @e7"*|*"click @e9"*|*"click @e3"*) touch %q;;
+*"select @e7"*|*"select @e6"*|*"click @e9"*|*"click @e3"*) touch %q;;
 *"select @e4 Gadget"*|*"upload @e3"*) rm -f %q;;
 *"get attr @e3 type") echo file; exit 0;;
-*--json) printf '%%s\n' '{"data":{"refs":{"e4":{"role":"combobox","name":"Product"},"e7":{"role":"option","name":"Gadget"},"e9":{"role":"button","name":"Go"},"e3":{"role":"button","name":"Attachment"}},"snapshot":"- combobox \"Product\" [expanded=false, ref=e4]: Widget\n  - option \"Gadget\" [ref=e7]\n- button \"Go\" [ref=e9]"}}'; exit 0;;
+*--json) printf '%%s\n' '{"data":{"refs":{"e4":{"role":"combobox","name":"Product"},"e6":{"role":"option","name":"Widget"},"e7":{"role":"option","name":"Gadget"},"e9":{"role":"button","name":"Go"},"e3":{"role":"button","name":"Attachment"}},"snapshot":"- combobox \"Product\" [expanded=false, ref=e4]: Widget\n  - option \"Widget\" [ref=e6]\n  - option \"Gadget\" [ref=e7]\n- button \"Go\" [ref=e9]"}}'; exit 0;;
 *--delta) if [ -f %q ]; then echo 'unchanged (revision 2)'; exit 0; fi;;
 esac
 echo "ran $*"
@@ -93,7 +94,7 @@ func TestAgentCLIPassesCommandsThrough(t *testing.T) {
 	b.Close() // closes once, only after use
 	calls, _ := os.ReadFile(log)
 	realRoot, _ := filepath.EvalSymlinks(root)
-	want := []string{"fill @e2 --headed", "wait --load networkidle --timeout 5000", "snapshot -i --delta", "boom", "close"} // every action is followed by the settled page
+	want := []string{"fill @e2 --headed", "wait --load networkidle --timeout 5000", "snapshot --delta", "boom", "close"} // every action is followed by the settled page
 	lines := strings.Split(strings.TrimSpace(string(calls)), "\n")
 	if len(lines) != len(want) {
 		t.Fatalf("calls:\n%s", calls)
@@ -110,6 +111,10 @@ func TestAgentCLIPassesCommandsThrough(t *testing.T) {
 	out, err = b.Run(ctx, json.RawMessage(`{"args":["select","@e7","Gadget"]}`))
 	if err != nil || !strings.Contains(out, "cody ran: select @e4 Gadget") || !strings.Contains(out, "ran --session "+session+" select @e4 Gadget") {
 		t.Fatalf("option not healed to its dropdown: %q %v", out, err)
+	}
+	// Aimed at the wrong option but naming the right one: the named value wins.
+	if out, err := b.Run(ctx, json.RawMessage(`{"args":["select","@e6","Gadget"]}`)); err != nil || !strings.Contains(out, "cody ran: select @e4 Gadget") {
+		t.Fatalf("named option ignored: %q %v", out, err)
 	}
 	// Knowing when to stop: four actions in a row without effect, then no more until the page is reopened.
 	for i := range 4 {
@@ -133,6 +138,13 @@ func TestAgentCLIPassesCommandsThrough(t *testing.T) {
 	if out, err := b.Run(ctx, json.RawMessage(`{"args":["fill","@e3","notes.txt"]}`)); err != nil || !strings.Contains(out, "cody ran: upload @e3 notes.txt") {
 		t.Fatalf("file chooser not healed: %q %v", out, err)
 	}
+	// A click on a file chooser uploads the one workspace file the user's request names.
+	os.WriteFile(filepath.Join(root, "notes.txt"), []byte("hi"), 0o600)
+	b.Goal = func() string { return "Upload the file notes.txt as the attachment." }
+	if out, err := b.Run(ctx, json.RawMessage(`{"args":["click","@e3"]}`)); err != nil || !strings.Contains(out, "cody ran: upload @e3 notes.txt") {
+		t.Fatalf("named file not uploaded: %q %v", out, err)
+	}
+	b.Goal = nil
 	// Uploads and downloads stay in the workspace: relative paths are made
 	// absolute (Chrome ignores relative ones), outside paths are refused, and a
 	// file that arrives is reported even though the page did not change.
@@ -235,5 +247,22 @@ func TestAgentCLIsLive(t *testing.T) {
 	data, _ := json.Marshal(map[string]any{"args": []string{"list-apps"}})
 	if out, err := NewAgentDesktop(t.TempDir()).Run(context.Background(), data); err != nil || !strings.Contains(out, `"command":"list-apps","data":{"apps":[`) {
 		t.Fatalf("desktop list-apps: %q %v", out, err)
+	}
+}
+
+// What a too-long page leads with: lines that mention the request, those with
+// its rarest words first, and never the wording of the instruction or its URL.
+func TestFocusPutsRareRequestWordsFirst(t *testing.T) {
+	page := strings.Repeat("- link \"Python docs\" [ref=e1]\n", 50) + "- link \"pairwise()\" [ref=e248]\n"
+	words := goalWords("Use the browser. Open https://docs.python.org/3/library/itertools.html and tell me in which Python version the pairwise function was added.")
+	if slices.Contains(words, "browser") || slices.Contains(words, "itertools") || !slices.Contains(words, "pairwise") {
+		t.Fatalf("request words: %v", words)
+	}
+	hits := focus(page, words, 15)
+	if len(hits) != 2 || hits[0] != `- link "pairwise()" [ref=e248]` {
+		t.Fatalf("rare word not first: %q", hits)
+	}
+	if focus(page, goalWords("Open https://example.com"), 15) != nil {
+		t.Fatal("a request with no words matched lines")
 	}
 }

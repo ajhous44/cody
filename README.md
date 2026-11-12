@@ -186,23 +186,19 @@ CODY_DESKTOP=true cody "In Notes, create a note titled Groceries"
 - `web_search` returns up to five results through the [Brave Search API](https://api-dashboard.search.brave.com/documentation/guides/authentication). It appears only when web research is enabled and a key is configured. Queries go to Brave and require approval in `ask` and `auto` modes; you supply your own key and are responsible for any API charges. The key is stored locally or read from `BRAVE_SEARCH_API_KEY`, never returned through the settings API.
 - `browser` runs [agent-browser](https://github.com/vercel-labs/agent-browser) and `desktop` runs [agent-desktop](https://github.com/vercel-labs/agent-desktop), Vercel Labs' Apache-2.0 CLIs for agents. Install them separately with `npm install -g agent-browser agent-desktop`; cody does not bundle or patch them, so `npm update -g` (or `agent-browser upgrade`) upgrades them with no cody release.
 
-Each call runs one CLI command, passed through unchanged with the workspace as its working directory, and returns the CLI's own output, capped at about a quarter of the model's context window. After every browser action cody waits for the page to settle and appends what changed, so the model always acts on current element refs without a separate snapshot call. Mistakes small models make are repaired without a model turn, and a model that keeps acting without effect is stopped. [BROWSER.md](BROWSER.md) explains how this works, why each piece exists, and the measured pass rates.
+Each call runs one CLI command, passed through unchanged with the workspace as its working directory, and returns the CLI's own output, capped at about a quarter of the model's context window. After every browser action cody waits for the page to settle and appends what changed, text included, so the model always acts on current element refs without a separate snapshot call. A page too long to show whole leads with what the user asked about. Mistakes small models make are repaired without a model turn, and a model that keeps acting without effect is stopped. [BROWSER.md](BROWSER.md) explains how this works, why each piece exists, and the measured pass rates.
 
-`--browser-only` (or `CODY_BROWSER=only`, or `"browser_only": true`) gives the model the browser and nothing else: no shell, file, or search tools, and a short prompt of its own in place of the coding prompt, workspace listing, and project instructions. It is the mode for browser tasks on small local models: about 380 tokens of fixed overhead instead of roughly 2,000, nothing to confuse the model with, and nothing on disk it can change. Uploads and downloads still work, because the browser CLI reads and writes those files itself.
+`--browser-only` (or `CODY_BROWSER=only`, or `"browser_only": true`) gives the model the browser and nothing else: no shell, file, or search tools, and a short prompt of its own in place of the coding prompt, workspace listing, and project instructions. It is the mode for browser tasks on small local models: about 390 tokens of fixed overhead instead of roughly 2,000, nothing to confuse the model with, and nothing on disk it can change. Uploads and downloads still work, because the browser CLI reads and writes those files itself.
 
-Measured in browser-only mode with small local models: six tasks on local test pages, three runs each, 8,192-token window, Apple M5, Ollama 0.40.15, agent-browser 0.42.0.
+Measured in browser-only mode with `qwen3.5:4b`, the small local model this is tuned for: 8,192-token window, Apple M5, Ollama 0.40.15, agent-browser 0.42.0. It passed every run.
 
-| Task | `qwen3.5:4b` | `qwen3.5:2b` |
-|---|---|---|
-| Fill a form and click a button | 3/3 | 2/3 |
-| Follow a link, read a table | 3/3 | 3/3 |
-| Follow a link, read a paragraph | 3/3 | 3/3 |
-| Dropdown, number, checkbox, submit | 2/3 | 1/3 |
-| Upload a file | 3/3 | 1/3 |
-| Download a file | 3/3 | 3/3 |
-| **Total** | **17/18** | **13/18** |
+| Tasks | Runs passed |
+|---|---|
+| Six on local test pages: forms, links, a dropdown order, upload, download | 30/30 |
+| Six on real sites: Wikipedia search, a public order form, a data table, a redirect, a GitHub license, the top Hacker News story | 18/18 |
+| Three on real sites never used while building this: a fact deep in a Python docs page, an IANA citation, Selenium's demo form | 9/9 |
 
-`qwen3.5:4b` uses 3.8 GB of memory at that window and took a median of 13 to 31 seconds per task; before this work it passed 6 of 12 runs on the first four tasks. `qwen3.5:2b` is not reliable enough. These are small samples on local pages, with timings from an M5; [BROWSER.md](BROWSER.md) lists the limits. The browser loop is in the prompt; `--help` and each CLI's built-in guide (`skills get core`, `skills get desktop`) document the rest, so new CLI features work as soon as you upgrade. Every command requires approval in `ask` and `auto` modes and shows the exact command line; `yolo` skips approval.
+`qwen3.5:4b` uses 3.8 GB of memory at that window and took a median of 9 to 33 seconds per task. Before this work it passed 6 of 12 runs on the first four local tasks. `qwen3.5:2b`, the next size down, passed 34 of 36 runs on the same tasks. These are small samples, with timings from an M5; [BROWSER.md](BROWSER.md) has the per-task results, how each failure was fixed, and the limits. The browser loop is in the prompt; `--help` and each CLI's built-in guide (`skills get core`, `skills get desktop`) document the rest, so new CLI features work as soon as you upgrade. Every command requires approval in `ask` and `auto` modes and shows the exact command line; `yolo` skips approval.
 
 - **Browser:** each engine gets its own agent-browser session (`--session cody-…`) in a headless Chrome with a temporary profile, closed with the engine or when you disable the feature. agent-browser finds an installed Chrome, or run `agent-browser install`. Downloads land in the project folder (set `AGENT_BROWSER_DOWNLOAD_PATH` to choose another) and cody tells the model which file arrived. `upload` and `download` paths are resolved inside the project folder and refused outside it. The project's `agent-browser.json` is read.
 - **Desktop:** agent-desktop reads and operates apps through the OS accessibility tree, headless by default (no pointer movement or focus changes). On macOS, grant Accessibility to the app that runs cody (`agent-desktop permissions --guide`); Linux needs `at-spi2-core`. Snapshots can include private content from any app, and they are sent to your model provider.

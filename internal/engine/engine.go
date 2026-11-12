@@ -54,6 +54,7 @@ type Engine struct {
 	indexed     bool           // search is registered only when an index exists
 	skills      []prompt.Skill // skill index in the prompt; bodies load on demand
 	browser     *tool.AgentCLI
+	ask         string // the user's current request, for tools that focus long results on it
 }
 
 func New(opts Options) (*Engine, error) {
@@ -91,6 +92,9 @@ func (e *Engine) Send(ctx context.Context, text string, h agent.Handler) error {
 	if err := ctx.Err(); err != nil {
 		return err
 	}
+	e.mu.Lock()
+	e.ask = text
+	e.mu.Unlock()
 	cfg := e.Config()
 	if cfg.Provider == "ollama" {
 		e.announceColdModel(ctx, h)
@@ -545,6 +549,7 @@ func (e *Engine) browserTool() *tool.AgentCLI {
 	if e.browser == nil {
 		e.browser = tool.NewAgentBrowser(e.root)
 		e.browser.Window = e.ContextLimit
+		e.browser.Goal = func() string { e.mu.Lock(); defer e.mu.Unlock(); return e.ask }
 	}
 	return e.browser
 }

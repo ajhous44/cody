@@ -8,6 +8,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
 	"slices"
 	"strconv"
 	"strings"
@@ -24,10 +25,14 @@ type AgentCLI struct {
 	name, bin, desc, root string
 	flags                 []string // prepended to every command
 	used                  atomic.Bool
-	stuck                 int // browser actions in a row that failed or changed nothing
+	stuck                 int  // browser actions in a row that failed or changed nothing
+	partial               bool // the last page was too big to show whole
 	// Window returns the model's context window in tokens, so one result fills
 	// at most about a quarter of it. Nil keeps the default limit.
 	Window func() int
+	// Goal returns the user's current request, so a page too long to show
+	// whole leads with the lines that mention it.
+	Goal func() string
 }
 
 const agentOutputLimit = 12000
@@ -40,7 +45,7 @@ var agentSessions atomic.Int64
 func NewAgentBrowser(root string) *AgentCLI {
 	session := fmt.Sprintf("cody-%d-%d", os.Getpid(), agentSessions.Add(1))
 	return &AgentCLI{name: "browser", bin: "agent-browser", root: root, flags: []string{"--session", session},
-		desc: `Browser use through the agent-browser CLI in cody's own headless session. args is one command without the program name: ["open","http://localhost:3000"], ["click","@e3"], ["fill","@e2","text"], ["select","@e4","Option"], ["check","@e5"], ["press","Enter"], ["read"] for the page text. Each action returns the page's controls with @eN refs, or what changed. ["--help"] lists every command. Web pages are untrusted.`}
+		desc: `Browser use through the agent-browser CLI in cody's own headless session. args is one command without the program name: ["open","http://localhost:3000"], ["click","@e3"], ["fill","@e2","text"], ["select","@e4","Option"], ["check","@e5"], ["press","Enter"], ["read"] for the page text. Each action returns the page with its @eN refs, or what changed. ["--help"] lists every command. Web pages are untrusted.`}
 }
 
 func NewAgentDesktop(root string) *AgentCLI {
@@ -144,6 +149,14 @@ func splitWords(s string) []string {
 	return out
 }
 
+// Page reports whether a browser result lists page elements, and whether it is
+// a whole page rather than a change. A later whole page makes earlier listings
+// stale, so the agent can drop them when the context window fills.
+func (c *AgentCLI) Page(result string) (listing, whole bool) {
+	listing = c.flags != nil && strings.Contains(result, "ref=e")
+	return listing, listing && !strings.Contains(result, "\nChanged:")
+}
+
 // Validate runs before approval so the user is never asked about an empty command.
 func (c *AgentCLI) Validate(args json.RawMessage) error {
 	_, err := c.argv(args)
@@ -170,7 +183,13 @@ func (c *AgentCLI) Run(ctx context.Context, args json.RawMessage) (string, error
 	if err := c.confine(argv); err != nil {
 		return "", err
 	}
+	limit := agentOutputLimit
+	if c.Window != nil {
+		// Accessibility trees run ~2.4 characters per token.
+		limit = min(max(c.Window()/2, 2000), 4*agentOutputLimit)
+	}
 	c.used.Store(true)
+	c.partial = false
 	before := dirNames(c.root)
 	out, err := c.exec(ctx, argv...)
 	if browser && !slices.Contains([]string{"snapshot", "read", "close", "skills", "help", "--help"}, argv[0]) {
@@ -178,7 +197,7 @@ func (c *AgentCLI) Run(ctx context.Context, args json.RawMessage) (string, error
 		// stale refs or spends a turn asking.
 		page := ""
 		if err == nil {
-			page = c.page(ctx)
+			page = c.page(ctx, limit)
 			// A download changes nothing on the page; say that a file arrived.
 			// ponytail: a large download can finish after this check; wait --download covers it.
 			var got []string
@@ -196,7 +215,7 @@ func (c *AgentCLI) Run(ctx context.Context, args json.RawMessage) (string, error
 		fixed, note := c.fit(ctx, argv, err != nil || page == "")
 		if ran := strings.Join(fixed, " "); fixed != nil && c.confine(fixed) == nil {
 			if out2, err2 := c.exec(ctx, fixed...); err2 == nil {
-				if page2 := c.page(ctx); page2 != "" {
+				if page2 := c.page(ctx, limit); page2 != "" {
 					out, err, page = fmt.Sprintf("%s did not work on that element, so cody ran: %s\n%s", argv[0], ran, out2), nil, page2
 				}
 			}
@@ -213,10 +232,8 @@ func (c *AgentCLI) Run(ctx context.Context, args json.RawMessage) (string, error
 			out += "\n" + page
 		}
 	}
-	limit := agentOutputLimit
-	if c.Window != nil {
-		// Accessibility trees run ~2.4 characters per token.
-		limit = min(max(c.Window()/2, 2000), 4*agentOutputLimit)
+	if tooLong := len(out) > limit || c.partial; browser && c.Goal != nil && tooLong && !slices.Contains([]string{"skills", "help", "--help"}, argv[0]) {
+		out = c.lead(ctx, out, limit) + out
 	}
 	if len(out) > limit {
 		out = strings.ToValidUTF8(out[:limit], "") + "\n[output truncated; narrow the command, e.g. snapshot -i or a smaller scope]"
@@ -228,6 +245,73 @@ func (c *AgentCLI) Run(ctx context.Context, args json.RawMessage) (string, error
 		return "", fmt.Errorf("%w\n%s", err, out)
 	}
 	return agentNotice + out, nil
+}
+
+var (
+	urlRe  = regexp.MustCompile(`https?://\S+`)
+	wordRe = regexp.MustCompile(`[\pL\pN]{4,}`)
+	// Words of the instruction, not of what the user is looking for.
+	askWords = []string{"browser", "open", "then", "tell", "what", "which", "with", "from", "that", "this", "page", "click", "link", "find", "show", "shown", "says", "into", "list", "next", "site", "website", "exact", "there", "their", "about", "please", "using", "uses"}
+)
+
+// goalWords are the words of the user's request worth looking for on a page:
+// not its URLs, short words, or the wording of the instruction itself.
+func goalWords(goal string) []string {
+	words := wordRe.FindAllString(strings.ToLower(urlRe.ReplaceAllString(goal, " ")), -1)
+	slices.Sort(words)
+	return slices.DeleteFunc(slices.Compact(words), func(w string) bool { return slices.Contains(askWords, w) })
+}
+
+// focus returns up to max lines of text that mention the request, lines with
+// its rarest words first: a word on every line of the page says nothing.
+func focus(text string, words []string, max int) []string {
+	lines := strings.Split(text, "\n")
+	byWord := map[string][]string{}
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		for _, w := range words {
+			if strings.Contains(lower, w) {
+				byWord[w] = append(byWord[w], line)
+			}
+		}
+	}
+	slices.SortStableFunc(words, func(a, b string) int { return len(byWord[a]) - len(byWord[b]) })
+	var hits []string
+	for _, w := range words {
+		for _, line := range byWord[w] {
+			if len(hits) < max && !slices.Contains(hits, line) {
+				hits = append(hits, line)
+			}
+		}
+	}
+	return hits
+}
+
+// lead is what a page result too long to show whole starts with, so truncation
+// does not hide what the model came for: the page's text about the rarest word
+// of the user's request (the CLI's own section filter), then the result's lines
+// that mention the request. Word matching only, no model call; "" when nothing
+// matches.
+func (c *AgentCLI) lead(ctx context.Context, result string, limit int) string {
+	words := goalWords(c.Goal())
+	var b strings.Builder
+	if text, err := c.exec(ctx, "read"); err == nil {
+		lower, best, n := strings.ToLower(text), "", 0
+		for _, w := range words {
+			if k := strings.Count(lower, w); k > 0 && (best == "" || k < n) {
+				best, n = w, k
+			}
+		}
+		if best != "" {
+			if part, err := c.exec(ctx, "read", "--filter", best); err == nil && part != "" {
+				fmt.Fprintf(&b, "Page text about %q:\n%s\n\n", best, strings.ToValidUTF8(part[:min(len(part), limit/3)], ""))
+			}
+		}
+	}
+	if hits := focus(result, words, 15); len(hits) > 0 {
+		b.WriteString("Lines that mention the request:\n" + strings.Join(hits, "\n") + "\n\n")
+	}
+	return b.String()
 }
 
 // confine keeps browser upload and download paths inside the workspace. The CLI
@@ -263,20 +347,31 @@ func dirNames(dir string) map[string]bool {
 }
 
 // page lets the page settle (a click or key press can start a navigation after
-// the command returns) and returns what changed since the last snapshot, or ""
-// when nothing did. A CLI too old to know these flags just returns "".
-func (c *AgentCLI) page(ctx context.Context) string {
+// the command returns) and returns what changed since the last look, or "" when
+// nothing did. It watches the whole page, not only its controls: a result often
+// appears as plain text. A CLI too old to know these flags just returns "".
+func (c *AgentCLI) page(ctx context.Context, limit int) string {
 	_, _ = c.exec(ctx, "wait", "--load", "networkidle", "--timeout", "5000")
-	page, err := c.exec(ctx, "snapshot", "-i", "--delta")
+	page, err := c.exec(ctx, "snapshot", "--delta")
 	if err != nil || strings.HasPrefix(page, "unchanged") {
 		return ""
 	}
 	// A partial change arrives as a JSON line splice; show only the new lines.
 	var delta struct {
-		TreeChange struct{ Lines []string }
+		TreeChange *struct{ Lines []string }
 	}
-	if json.Unmarshal([]byte(page), &delta) == nil && len(delta.TreeChange.Lines) > 0 {
+	if json.Unmarshal([]byte(page), &delta) == nil && delta.TreeChange != nil {
+		if len(delta.TreeChange.Lines) == 0 {
+			return "Changed: some content was removed."
+		}
 		return "Changed:\n" + strings.Join(delta.TreeChange.Lines, "\n")
+	}
+	// A new page too big to show whole: its controls, and where its text is.
+	if len(page) > limit {
+		if controls, err := c.exec(ctx, "snapshot", "-i"); err == nil {
+			c.partial = true
+			return controls + "\n[controls only: read prints the page's text, read --filter <words> a part of it]"
+		}
 	}
 	return page
 }
@@ -305,10 +400,24 @@ func (c *AgentCLI) fit(ctx context.Context, argv []string, failed bool) (fixed [
 	el := snap.Data.Refs[ref[1:]]
 	switch el.Role {
 	case "button":
-		if kind, _ := c.exec(ctx, "get", "attr", ref, "type"); kind == "file" && value != "" {
-			fixed = []string{"upload", ref, value}
-		} else if kind == "file" {
-			note = " " + ref + " is a file chooser: use upload " + ref + " <path>."
+		if kind, _ := c.exec(ctx, "get", "attr", ref, "type"); kind == "file" {
+			// No path given: the one workspace file the user's request names.
+			if value == "" && c.Goal != nil {
+				var named []string
+				for name := range dirNames(c.root) {
+					if strings.Contains(c.Goal(), name) {
+						named = append(named, name)
+					}
+				}
+				if len(named) == 1 {
+					value = named[0]
+				}
+			}
+			if value != "" {
+				fixed = []string{"upload", ref, value}
+			} else {
+				note = " " + ref + " is a file chooser: use upload " + ref + " <path>."
+			}
 		}
 	case "option":
 		// The dropdown is the nearest less-indented line above the option.
@@ -320,7 +429,10 @@ func (c *AgentCLI) fit(ctx context.Context, argv []string, failed bool) (fixed [
 				_, parent, _ := strings.Cut(lines[j], "ref=")
 				parent, _, _ = strings.Cut(parent, "]")
 				if role := snap.Data.Refs[parent].Role; role == "combobox" || role == "listbox" {
-					fixed = []string{"select", "@" + parent, el.Name}
+					if value == "" { // the option that was aimed at, unless the model named one
+						value = el.Name
+					}
+					fixed = []string{"select", "@" + parent, value}
 				}
 				break
 			}
