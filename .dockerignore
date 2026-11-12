@@ -1,0 +1,7 @@
+.git
+.claude
+dist
+docs
+cody
+tests/browser/node_modules
+tests/browser/test-results
