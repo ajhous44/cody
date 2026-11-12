@@ -1239,9 +1239,13 @@ func TestSessionForkEndpointAndTurnNumbers(t *testing.T) {
 // A reloaded thread labels tool calls like the live view: the command or
 // path, with the home folder shortened, never raw JSON.
 func TestSavedToolCallsGetReadableLabels(t *testing.T) {
-	t.Setenv("HOME", "/Users/ada")
+	// Native home and separators: Windows reads USERPROFILE and uses `\`.
+	home := filepath.FromSlash("/Users/ada")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	cmd, _ := json.Marshal(map[string]string{"command": "cd " + filepath.Join(home, "code", "shop") + " && go test ./..."})
 	for args, want := range map[string]string{
-		`{"command":"cd /Users/ada/code/shop && go test ./..."}`:    "cd ~/code/shop && go test ./...",
+		string(cmd): "cd " + filepath.Join("~", "code", "shop") + " && go test ./...",
 		`{"path":"cart/cart.go","old_string":"a","new_string":"b"}`: "cart/cart.go",
 		`{"args":["click","@e3"]}`:                                  "click @e3",
 		`not json`:                                                  "not json",

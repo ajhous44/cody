@@ -1,9 +1,18 @@
 package clip
 
 import (
+	"path/filepath"
 	"testing"
 	"unicode/utf8"
 )
+
+// setHome points os.UserHomeDir at home on every OS: Windows reads
+// USERPROFILE, everything else HOME.
+func setHome(t *testing.T, home string) {
+	home = filepath.FromSlash(home)
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+}
 
 func TestBytesKeepsRunesWhole(t *testing.T) {
 	s := "写一个应用" // 3 bytes per rune
@@ -19,13 +28,15 @@ func TestBytesKeepsRunesWhole(t *testing.T) {
 }
 
 func TestTildeShortensHomePathsForDisplay(t *testing.T) {
-	t.Setenv("HOME", "/Users/ada")
+	setHome(t, "/Users/ada")
 	for in, want := range map[string]string{
 		"/Users/ada/code/shop":            "~/code/shop",
 		"cd /Users/ada/code/shop && make": "cd ~/code/shop && make",
 		"/Users/ada":                      "~",
 		"/Users/adam/code":                "/Users/adam/code",
 	} {
+		// Native separators, so Windows (`\`) is exercised the same way.
+		in, want = filepath.FromSlash(in), filepath.FromSlash(want)
 		if got := Tilde(in); got != want {
 			t.Errorf("Tilde(%q) = %q, want %q", in, got, want)
 		}
