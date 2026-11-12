@@ -189,6 +189,9 @@ func applyFlags(cfg *config.Config, opts options) {
 	if opts.debug != nil {
 		cfg.Debug = *opts.debug
 	}
+	if opts.browserOnly {
+		cfg.BrowserEnabled, cfg.BrowserOnly = true, true
+	}
 	if opts.plan {
 		cfg.PlanGate = true
 	}
@@ -902,6 +905,7 @@ flags:
       --yolo               shorthand for --approval yolo
       --show-thinking      print model reasoning traces (hidden by default)
       --plan               require an approved plan before any change
+      --browser-only       give the model the browser and no shell or file tools
       --plain              plain line input (no editor, picker, or live status)
       --sandbox MODE       off, workspace (shell writes only in the project,
                            temp, and caches), or strict (also no network)
@@ -932,7 +936,8 @@ bench flags:
 config: ~/.cody/config.json
 env:    CODY_PROVIDER, CODY_MODEL, CODY_APPROVAL, CODY_API_KEY,
         CODY_NO_AUTOSTART, CODY_EMBED_PROVIDER, OLLAMA_HOST, OPENROUTER_API_KEY,
-        CODY_DEBUG, CODY_PLAN, CODY_SANDBOX, CODY_PLAIN
+        CODY_DEBUG, CODY_PLAN, CODY_SANDBOX, CODY_PLAIN, CODY_CONTEXT,
+        CODY_BROWSER (true, false, or only)
 `)
 }
 

@@ -166,7 +166,13 @@ func TestPromptNudgesQuestionWithoutTools(t *testing.T) {
 		{{ToolCalls: []provider.ToolCallDelta{{Index: 0, ID: "c1", Name: "echo", Args: "{}"}}}},
 		{{Content: "done"}},
 	}}
-	a := newTestAgent(p, &echoTool{}, nil)
+	// The nudge says to explore with ls/grep, so it needs an agent that can:
+	// with the browser alone, the question simply goes to the user.
+	alone := &fakeProvider{script: [][]provider.Delta{{{Content: "Which page should I open?"}}}}
+	if added, err := newTestAgent(alone, &echoTool{}, nil).Prompt(context.Background(), "check the site", nil); err != nil || len(added) != 2 || len(alone.reqs) != 1 {
+		t.Fatalf("no-grep agent nudged: %d messages, %d requests, %v", len(added), len(alone.reqs), err)
+	}
+	a := New(Options{Provider: p, Model: "test", System: "system", Tools: tool.NewRegistry(&echoTool{}, tool.NewGrep(t.TempDir()))})
 	notices := 0
 	added, err := a.Prompt(context.Background(), "change the background", func(e Event) {
 		if e.Kind == KindNotice {
@@ -342,18 +348,19 @@ func TestPromptEmptyResponseFails(t *testing.T) {
 	}
 }
 
-func TestPromptEmptyAfterToolSucceeds(t *testing.T) {
-	p := &fakeProvider{script: [][]provider.Delta{
-		{{ToolCalls: []provider.ToolCallDelta{{Index: 0, ID: "c1", Name: "echo", Args: "{}"}}}},
-		{{FinishReason: "stop"}},
-	}}
-	a := newTestAgent(p, &echoTool{}, nil)
-	added, err := a.Prompt(context.Background(), "go", nil)
-	if err != nil {
-		t.Fatalf("Prompt: %v", err)
+// A thinking model can finish inside its reasoning and say nothing: the reply
+// is asked for once more with reasoning off, and a second silence ends the turn.
+func TestPromptEmptyAfterToolRetriesWithoutReasoning(t *testing.T) {
+	call := []provider.Delta{{ToolCalls: []provider.ToolCallDelta{{Index: 0, ID: "c1", Name: "echo", Args: "{}"}}}}
+	p := &fakeProvider{script: [][]provider.Delta{call, {{Reasoning: "the answer is 4", FinishReason: "stop"}}, {{Content: "4"}}}}
+	added, err := newTestAgent(p, &echoTool{}, nil).Prompt(context.Background(), "go", nil)
+	if err != nil || len(added) != 4 || added[3].Content != "4" || p.reqs[1].NoReasoning || !p.reqs[2].NoReasoning {
+		t.Fatalf("retry: %d messages, %v, requests %+v", len(added), err, p.reqs)
 	}
-	if len(added) != 3 {
-		t.Fatalf("added %d messages, want 3", len(added))
+	p = &fakeProvider{script: [][]provider.Delta{call, {{FinishReason: "stop"}}, {{FinishReason: "stop"}}}}
+	added, err = newTestAgent(p, &echoTool{}, nil).Prompt(context.Background(), "go", nil)
+	if err != nil || len(added) != 3 {
+		t.Fatalf("still silent: %d messages, %v", len(added), err)
 	}
 }
 

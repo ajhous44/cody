@@ -32,7 +32,6 @@ func TestPromptCacheWireAndUsage(t *testing.T) {
 		{"openrouter", "anthropic/claude-sonnet-4.5", true, true},
 		{"openrouter", "openai/gpt-4.1", true, false},
 		{"openai", "gpt-4.1", true, false},
-		{"ollama", "local", false, false},
 		{"custom", "custom", false, false},
 	} {
 		t.Run(tc.name+tc.model, func(t *testing.T) {
@@ -58,9 +57,6 @@ func TestPromptCacheWireAndUsage(t *testing.T) {
 				if payload[key] != float64(123) {
 					t.Errorf("output limit: %v", payload)
 				}
-				if (payload["reasoning_effort"] == "none") != (tc.name == "ollama") {
-					t.Errorf("reasoning off only where verified: %v", payload)
-				}
 				fmt.Fprint(w, "data: {\"choices\":[],\"usage\":{\"prompt_tokens\":3000,\"prompt_tokens_details\":{\"cached_tokens\":2000,\"cache_write_tokens\":500}}}\n\ndata: [DONE]\n\n")
 			}))
 			defer srv.Close()
@@ -75,6 +71,66 @@ func TestPromptCacheWireAndUsage(t *testing.T) {
 				t.Fatalf("cache usage: %+v %v", d, err)
 			}
 		})
+	}
+}
+
+// Ollama is driven through its native API so cody, not the server default,
+// decides the context window.
+func TestOllamaNativeChat(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		var body struct {
+			Think    *bool
+			Options  map[string]float64
+			Messages []struct {
+				Role, Content string
+				ToolName      string `json:"tool_name"`
+				ToolCalls     []struct {
+					Function struct{ Arguments map[string]string }
+				} `json:"tool_calls"`
+			}
+		}
+		if err := json.NewDecoder(r.Body).Decode(&body); err != nil {
+			t.Errorf("request body: %v", err) // fails when arguments are sent as a string
+		}
+		m := body.Messages
+		if r.URL.Path != "/api/chat" || body.Options["num_ctx"] != 8192 || body.Options["num_predict"] != 99 || body.Think == nil || *body.Think ||
+			len(m) != 3 || m[1].ToolCalls[0].Function.Arguments["path"] != "a.go" || m[2].ToolName != "read" {
+			t.Errorf("request: %s %+v", r.URL.Path, body)
+		}
+		fmt.Fprint(w, `{"message":{"thinking":"hm"}}`+"\n"+
+			`{"message":{"content":"hi"}}`+"\n"+
+			`{"message":{"tool_calls":[{"function":{"name":"read","arguments":{"path":"b.go"}}},{"function":{"name":"glob","arguments":{}}}]}}`+"\n"+
+			`{"done":true,"done_reason":"stop","prompt_eval_count":40,"eval_count":2}`+"\n")
+	}))
+	defer srv.Close()
+	s, err := NewOpenAI("ollama", srv.URL+"/v1", "").Stream(context.Background(), Request{
+		Model: "m", ContextTokens: 8192, MaxOutputTokens: 99, NoReasoning: true,
+		Messages: []Message{
+			{Role: "user", Content: "go"},
+			{Role: "assistant", ToolCalls: []ToolCall{{ID: "1", Function: Func{Name: "read", Arguments: `{"path":"a.go"}`}}}},
+			{Role: "tool", Name: "read", Content: "package a"},
+		},
+	})
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer s.Close()
+	var got []Delta
+	for {
+		d, err := s.Recv()
+		if err == io.EOF {
+			break
+		}
+		if err != nil {
+			t.Fatal(err)
+		}
+		got = append(got, d)
+	}
+	calls := got[2].ToolCalls
+	if len(got) != 4 || got[0].Reasoning != "hm" || got[1].Content != "hi" ||
+		len(calls) != 2 || calls[0].Index == calls[1].Index || calls[0].Name != "read" || calls[0].Args != `{"path":"b.go"}` ||
+		got[3].FinishReason != "stop" || got[3].Usage.PromptTokens != 40 || got[3].Usage.CompletionTokens != 2 {
+		t.Fatalf("stream: %+v", got)
 	}
 }
 

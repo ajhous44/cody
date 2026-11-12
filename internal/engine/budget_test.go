@@ -35,4 +35,17 @@ func TestRequestOverheadBudget(t *testing.T) {
 	if got > 2700 {
 		t.Errorf("all opt-ins request overhead ~%d tokens, budget 2700", got)
 	}
+	// Browser-only: one tool and its own short prompt, for small local windows.
+	only := &Engine{root: root, cfg: config.Default()}
+	only.cfg.BrowserOnly = true
+	names := ""
+	for _, tl := range only.tools().List() {
+		names += tl.Name() + " "
+	}
+	specs, _ := json.Marshal(only.tools().Specs())
+	got = (len(prompt.BrowserOnly(false)) + len(specs)) / 4
+	t.Logf("browser-only request overhead ~%d tokens (budget 450)", got)
+	if names != "browser " || got > 450 {
+		t.Errorf("browser-only: tools %q, overhead ~%d tokens, budget 450", names, got)
+	}
 }

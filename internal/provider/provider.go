@@ -39,6 +39,7 @@ type FuncSpec struct {
 type Request struct {
 	CacheKey        string
 	MaxOutputTokens int
+	ContextTokens   int  // the window the caller budgets for; Ollama loads the model at this size
 	NoReasoning     bool // bookkeeping calls such as summaries skip model thinking
 	OnRetry         func(time.Duration)
 	Model           string

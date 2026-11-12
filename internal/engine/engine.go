@@ -190,7 +190,7 @@ func (e *Engine) SetModel(model string) {
 	e.model = model
 	e.cfg.Model = model
 	e.ag.SetModel(model)
-	e.ag.SetLimits(defaultBudget(e.p.Name()), 0)
+	e.ag.SetLimits(defaultBudget(e.cfg), 0)
 	e.budgetReady = false
 }
 
@@ -250,14 +250,15 @@ func (e *Engine) Title(ctx context.Context, text string) string {
 	// Remember which thread is being named: the turn runs alongside this
 	// call, and a session switch in between must not rename the new thread.
 	e.mu.Lock()
-	sid, p, model := e.store.ID(), e.p, e.model
+	sid, p, model, ag := e.store.ID(), e.p, e.model, e.ag
 	e.mu.Unlock()
 	title := ""
 	if p != nil && model != "" {
 		tctx, cancel := context.WithTimeout(ctx, 15*time.Second)
 		defer cancel()
 		stream, err := p.Stream(tctx, provider.Request{
-			Model: model,
+			// The same window as the turn, or Ollama reloads the model twice.
+			Model: model, ContextTokens: ag.ContextTokens(), NoReasoning: true,
 			Messages: []provider.Message{
 				{Role: "system", Content: `You name chat threads. Reply with one JSON object and nothing else: {"title":"3 to 5 lowercase words"}. No markdown, no code fences, no extra text.`},
 				{Role: "user", Content: text},
@@ -446,9 +447,13 @@ func (e *Engine) installProvider(cfg *config.Config, p provider.Provider, model 
 	e.indexed = indexExists(e.root)
 	e.skills = discoverSkills(e.root)
 	system := prompt.Base(e.root) + prompt.Optional(prompt.Opts{Web: cfg.WebEnabled, Browser: cfg.BrowserEnabled, Desktop: cfg.DesktopEnabled, Plan: cfg.PlanGate, Sandbox: cfg.Sandbox}) + prompt.SkillsIndex(e.skills)
+	root := e.root
+	if cfg.BrowserOnly {
+		system, root = prompt.BrowserOnly(cfg.PlanGate), "" // no root: AGENTS.md is for coding
+	}
 	e.ag = agent.New(agent.Options{
-		Provider: p, Model: model, System: system, Root: e.root, Tools: e.tools(),
-		Approver: e.approverFor(), ContextTokens: defaultBudget(p.Name()), Debug: cfg.Debug, RequirePlan: cfg.PlanGate,
+		Provider: p, Model: model, System: system, Root: root, Tools: e.tools(),
+		Approver: e.approverFor(), ContextTokens: defaultBudget(cfg), Debug: cfg.Debug, RequirePlan: cfg.PlanGate,
 		Record: func(m provider.Message) error { return e.recordBatch([]session.Record{recordFromMessage(m)}) },
 	})
 	e.ag.SetHistory(history)
@@ -488,6 +493,16 @@ func (e *Engine) approverFor() agent.Approver {
 }
 
 func (e *Engine) tools() *tool.Registry {
+	if e.cfg.BrowserOnly {
+		// A browser task needs no shell or file tools (the browser CLI uploads and
+		// downloads by itself). One tool is nothing to confuse a small model with,
+		// a fraction of the prompt, and nothing on disk to damage.
+		tools := []tool.Tool{e.browserTool()}
+		if e.cfg.PlanGate {
+			tools = append(tools, tool.NewPlan())
+		}
+		return tool.NewRegistry(tools...)
+	}
 	tools := []tool.Tool{
 		tool.NewRead(e.root),
 		tool.NewWrite(e.root),
@@ -512,18 +527,26 @@ func (e *Engine) tools() *tool.Registry {
 		}
 	}
 	if e.cfg.BrowserEnabled {
-		if e.browser == nil {
-			e.browser = tool.NewAgentBrowser(e.root)
-		}
-		tools = append(tools, e.browser)
+		tools = append(tools, e.browserTool())
 	} else if e.browser != nil {
 		e.browser.Close()
 		e.browser = nil
 	}
 	if e.cfg.DesktopEnabled {
-		tools = append(tools, tool.NewAgentDesktop(e.root))
+		desktop := tool.NewAgentDesktop(e.root)
+		desktop.Window = e.ContextLimit
+		tools = append(tools, desktop)
 	}
 	return tool.NewRegistry(tools...)
+}
+
+// browserTool returns this engine's one browser session, creating it on first use.
+func (e *Engine) browserTool() *tool.AgentCLI {
+	if e.browser == nil {
+		e.browser = tool.NewAgentBrowser(e.root)
+		e.browser.Window = e.ContextLimit
+	}
+	return e.browser
 }
 
 // writeMetaLocked appends the session header. Callers must hold e.mu.
@@ -681,17 +704,19 @@ func buildProvider(ctx context.Context, cfg *config.Config, resolveModel bool) (
 	return p, model, nil
 }
 
-// defaultBudget is the trim budget used before the real context window is
-// known. refreshBudget resolves model metadata before the first request, without stalling
-// engine construction on a probe.
-func defaultBudget(providerName string) int {
-	if providerName != "ollama" {
+// defaultBudget is the context window before hosted model metadata is known.
+// Ollama loads the model at exactly this size, so for local models it is final.
+func defaultBudget(cfg *config.Config) int {
+	if cfg.Provider != "ollama" {
 		return 64000
 	}
-	return 8000
+	if cfg.ContextTokens > 0 {
+		return cfg.ContextTokens
+	}
+	return 8192
 }
 
-// Resolve limits once per hosted model; local runner limits may change after loading.
+// Resolve limits once per hosted model.
 func (e *Engine) refreshBudget(ctx context.Context) {
 	if e.budgetReady {
 		return
@@ -702,7 +727,7 @@ func (e *Engine) refreshBudget(ctx context.Context) {
 	window, output := modelLimits(probe, cfg, cfg.Provider, e.model)
 	if window > 0 {
 		e.ag.SetLimits(window, output)
-		e.budgetReady = cfg.Provider != "ollama"
+		e.budgetReady = true
 	}
 }
 
@@ -710,10 +735,7 @@ func modelLimits(ctx context.Context, cfg *config.Config, name, model string) (i
 	if model == "" {
 		return 0, 0
 	}
-	switch name {
-	case "ollama":
-		return provider.OllamaLoadedContext(ctx, cfg.ProviderConfig(name).BaseURL, model), 0
-	case "openrouter":
+	if name == "openrouter" {
 		models, err := provider.ListOpenRouterModels(ctx, cfg.ProviderConfig(name).BaseURL)
 		if err == nil {
 			for _, m := range models {

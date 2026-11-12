@@ -37,6 +37,7 @@ func (a *Agent) prepare(ctx context.Context, h Handler) ([]provider.Message, int
 	history := append([]provider.Message(nil), a.history...)
 	opts, summary, through := a.opts, a.summary, a.summaryEnd
 	total := a.estTotal - a.compactedTokens
+	scale := max(a.scale, 1)
 	a.mu.Unlock()
 	output := min(4096, opts.ContextTokens/4)
 	if opts.MaxOutputTokens > 0 {
@@ -44,7 +45,7 @@ func (a *Agent) prepare(ctx context.Context, h Handler) ([]provider.Message, int
 	}
 	schemas, _ := json.Marshal(opts.Tools.Specs())
 	// Leave room for estimation error, message framing, and a possible tool-use reminder.
-	budget := opts.ContextTokens - output - opts.ContextTokens/10 - len(schemas)/3 - 256
+	budget := int(float64(opts.ContextTokens-output-opts.ContextTokens/10-len(schemas)/3-256) / scale)
 	latest := -1
 	for i := range history {
 		if history[i].Role == "user" {
@@ -138,7 +139,7 @@ func (a *Agent) summarize(ctx context.Context, opts Options, previous string, hi
 			}
 		}
 		stream, err := opts.Provider.Stream(ctx, provider.Request{
-			Model: opts.Model, MaxOutputTokens: output, NoReasoning: true,
+			Model: opts.Model, MaxOutputTokens: output, ContextTokens: opts.ContextTokens, NoReasoning: true,
 			Messages: []provider.Message{
 				{Role: "system", Content: summaryPrompt},
 				{Role: "user", Content: "Previous summary:\n" + previous + "\nTranscript (may continue in the next batch):\n" + remaining[:end]},

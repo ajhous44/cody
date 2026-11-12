@@ -73,7 +73,7 @@ func TestWebFetchFitsColdLocalContext(t *testing.T) {
 		cfg.WebEnabled, cfg.BrowserEnabled = true, browserEnabled
 		eng := newEngine(t, cfg, t.TempDir(), nil)
 		eng.budgetReady = true
-		eng.ag.SetLimits(defaultBudget("ollama"), 0)
+		eng.ag.SetLimits(defaultBudget(config.Default()), 0)
 		err := eng.Send(context.Background(), "Read the Go documentation page and cite its title.", nil)
 		srv.Close()
 		if err != nil {

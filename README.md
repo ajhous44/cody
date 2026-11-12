@@ -178,6 +178,7 @@ All three are off by default and work through the shared CLI/GUI engine. Enable 
 CODY_WEB=true cody "Read https://go.dev/doc/ and summarize the documentation"
 # Set BRAVE_SEARCH_API_KEY in your environment to also enable web_search.
 CODY_BROWSER=true cody "Open http://localhost:3000 and check the homepage"
+cody --browser-only "Open http://localhost:3000, sign up as Ada, and tell me what the welcome page says"
 CODY_DESKTOP=true cody "In Notes, create a note titled Groceries"
 ```
 
@@ -185,9 +186,25 @@ CODY_DESKTOP=true cody "In Notes, create a note titled Groceries"
 - `web_search` returns up to five results through the [Brave Search API](https://api-dashboard.search.brave.com/documentation/guides/authentication). It appears only when web research is enabled and a key is configured. Queries go to Brave and require approval in `ask` and `auto` modes; you supply your own key and are responsible for any API charges. The key is stored locally or read from `BRAVE_SEARCH_API_KEY`, never returned through the settings API.
 - `browser` runs [agent-browser](https://github.com/vercel-labs/agent-browser) and `desktop` runs [agent-desktop](https://github.com/vercel-labs/agent-desktop), Vercel Labs' Apache-2.0 CLIs for agents. Install them separately with `npm install -g agent-browser agent-desktop`; cody does not bundle or patch them, so `npm update -g` (or `agent-browser upgrade`) upgrades them with no cody release.
 
-Each call runs one CLI command, passed through unchanged with the workspace as its working directory, and returns the CLI's own output (capped at 12,000 characters). The model learns the commands from each CLI's built-in guide (`skills get core`, `skills get desktop`), so new CLI features work as soon as you upgrade. Every command requires approval in `ask` and `auto` modes and shows the exact command line; `yolo` skips approval.
+Each call runs one CLI command, passed through unchanged with the workspace as its working directory, and returns the CLI's own output, capped at about a quarter of the model's context window. After every browser action cody waits for the page to settle and appends what changed, so the model always acts on current element refs without a separate snapshot call. Mistakes small models make are repaired without a model turn, and a model that keeps acting without effect is stopped. [BROWSER.md](BROWSER.md) explains how this works, why each piece exists, and the measured pass rates.
 
-- **Browser:** each engine gets its own agent-browser session (`--session cody-…`) in a headless Chrome with a temporary profile, closed with the engine or when you disable the feature. agent-browser finds an installed Chrome, or run `agent-browser install`. Its defaults apply: downloads go to your Downloads folder and the project's `agent-browser.json` is read; configure either in `~/.agent-browser/config.json`.
+`--browser-only` (or `CODY_BROWSER=only`, or `"browser_only": true`) gives the model the browser and nothing else: no shell, file, or search tools, and a short prompt of its own in place of the coding prompt, workspace listing, and project instructions. It is the mode for browser tasks on small local models: about 380 tokens of fixed overhead instead of roughly 2,000, nothing to confuse the model with, and nothing on disk it can change. Uploads and downloads still work, because the browser CLI reads and writes those files itself.
+
+Measured in browser-only mode with small local models: six tasks on local test pages, three runs each, 8,192-token window, Apple M5, Ollama 0.40.15, agent-browser 0.42.0.
+
+| Task | `qwen3.5:4b` | `qwen3.5:2b` |
+|---|---|---|
+| Fill a form and click a button | 3/3 | 2/3 |
+| Follow a link, read a table | 3/3 | 3/3 |
+| Follow a link, read a paragraph | 3/3 | 3/3 |
+| Dropdown, number, checkbox, submit | 2/3 | 1/3 |
+| Upload a file | 3/3 | 1/3 |
+| Download a file | 3/3 | 3/3 |
+| **Total** | **17/18** | **13/18** |
+
+`qwen3.5:4b` uses 3.8 GB of memory at that window and took a median of 13 to 31 seconds per task; before this work it passed 6 of 12 runs on the first four tasks. `qwen3.5:2b` is not reliable enough. These are small samples on local pages, with timings from an M5; [BROWSER.md](BROWSER.md) lists the limits. The browser loop is in the prompt; `--help` and each CLI's built-in guide (`skills get core`, `skills get desktop`) document the rest, so new CLI features work as soon as you upgrade. Every command requires approval in `ask` and `auto` modes and shows the exact command line; `yolo` skips approval.
+
+- **Browser:** each engine gets its own agent-browser session (`--session cody-…`) in a headless Chrome with a temporary profile, closed with the engine or when you disable the feature. agent-browser finds an installed Chrome, or run `agent-browser install`. Downloads land in the project folder (set `AGENT_BROWSER_DOWNLOAD_PATH` to choose another) and cody tells the model which file arrived. `upload` and `download` paths are resolved inside the project folder and refused outside it. The project's `agent-browser.json` is read.
 - **Desktop:** agent-desktop reads and operates apps through the OS accessibility tree, headless by default (no pointer movement or focus changes). On macOS, grant Accessibility to the app that runs cody (`agent-desktop permissions --guide`); Linux needs `at-spi2-core`. Snapshots can include private content from any app, and they are sent to your model provider.
 - **Windows:** npm installs `.cmd` shims, which cody refuses because `cmd.exe` re-parses arguments. Put the native `agent-browser.exe` / `agent-desktop.exe` from each project's GitHub release first on `PATH`.
 
@@ -305,7 +322,9 @@ cody index
   "embed_provider": "ollama",
   "web_enabled": false,
   "browser_enabled": false,
+  "browser_only": false,
   "plan_gate": false,
+  "context_tokens": 8192,
   "sandbox": "off",
   "sandbox_writable": [],
   "brave_search_key": "",
@@ -316,9 +335,11 @@ cody index
 }
 ```
 
-Environment overrides: `CODY_PROVIDER`, `CODY_MODEL`, `CODY_APPROVAL`, `CODY_API_KEY`, `CODY_NO_AUTOSTART`, `CODY_EMBED_PROVIDER`, `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `CODY_WEB`, `CODY_BROWSER`, `CODY_DESKTOP`, `CODY_DEBUG`, `CODY_PLAN`, `CODY_SANDBOX`, `CODY_PLAIN`, `BRAVE_SEARCH_API_KEY`. `CODY_WEB`, `CODY_BROWSER`, `CODY_DESKTOP`, `CODY_DEBUG`, and `CODY_PLAN` accept `true`/`false` or `1`/`0`. Debug mode (also `--debug[=BOOL]` or the GUI settings toggle) appends the provider's raw status and message to errors and lists every retry. Overrides apply only to the running process; saving GUI settings writes just the values you changed, so environment values and env-provided keys never reach `config.json`. `CODY_CONFIG_DIR` overrides the default `~/.cody` directory for settings, sessions, and indexes.
+Environment overrides: `CODY_PROVIDER`, `CODY_MODEL`, `CODY_APPROVAL`, `CODY_API_KEY`, `CODY_NO_AUTOSTART`, `CODY_EMBED_PROVIDER`, `OLLAMA_HOST`, `OPENROUTER_API_KEY`, `CODY_WEB`, `CODY_BROWSER`, `CODY_DESKTOP`, `CODY_DEBUG`, `CODY_PLAN`, `CODY_SANDBOX`, `CODY_PLAIN`, `CODY_CONTEXT`, `BRAVE_SEARCH_API_KEY`. `CODY_WEB`, `CODY_BROWSER`, `CODY_DESKTOP`, `CODY_DEBUG`, and `CODY_PLAN` accept `true`/`false` or `1`/`0`; `CODY_BROWSER` also accepts `only`. Debug mode (also `--debug[=BOOL]` or the GUI settings toggle) appends the provider's raw status and message to errors and lists every retry. Overrides apply only to the running process; saving GUI settings writes just the values you changed, so environment values and env-provided keys never reach `config.json`. `CODY_CONFIG_DIR` overrides the default `~/.cody` directory for settings, sessions, and indexes.
 
 Any OpenAI-compatible endpoint works as an extra provider: add a `providers.<name>.base_url` entry and pass `-p <name>`.
+
+`context_tokens` (or `CODY_CONTEXT`) is the context window Ollama models are loaded with, 8192 by default. Ollama's own default is 4096, too small for an agent, so cody talks to Ollama's native API and sets the window on every request. Raise it on machines with memory to spare (for example 16384 or 32768); a larger window costs RAM and a smaller one summarizes sooner. Hosted models use the window the provider reports.
 
 Project instructions can live in `AGENTS.md` or the existing `CODY.md` at the workspace root (8 KiB per file). Both are loaded; `AGENTS.md` takes precedence where they conflict. Root instructions refresh each user turn. For `read`, `write`, and `edit`, Cody also discovers nested `AGENTS.md` files between the root and the target file. Deeper instructions apply to their subtree. A mutation with newly discovered or changed instructions returns those instructions before the model can retry the action. Shell commands still rely on the model reading applicable instructions before changing files. Instruction discovery stays inside the workspace.
 
@@ -336,7 +357,7 @@ Run `git log --oneline $(git describe --tags --abbrev=0)..HEAD`, group the commi
 
 Skills load lazily. The system prompt carries only one `name: description` line per skill (up to 50), and the model calls the `skill` tool to read a skill's full instructions, or one of its other files, when a task matches. Loading is read-only and never leaves the skill's folder; running a skill's scripts still goes through the normal shell approval. With no skills installed, nothing is added to the prompt. Adding or editing a skill takes effect on the next request. Project skills are repository content, so treat them with the same trust as `AGENTS.md`.
 
-Long sessions summarize older context while retaining the current request and most recent tool exchange verbatim. The full transcript stays saved; summaries are held in memory and rebuilt if needed after resume. Compaction uses additional model requests only when necessary. An active request or tool result that cannot fit produces an explicit error. Cody reserves output and tool-schema space, uses OpenRouter model limits and Ollama's loaded context window when available, and falls back to conservative estimates otherwise.
+Long sessions summarize older context while retaining the current request and most recent tool exchange verbatim. The full transcript stays saved; summaries are held in memory and rebuilt if needed after resume. Compaction uses additional model requests only when necessary. An active request or tool result that cannot fit produces an explicit error. Cody reserves output and tool-schema space, uses OpenRouter model limits and the configured Ollama window (`context_tokens`), and corrects its size estimate with the token counts the provider reports.
 
 Prompt caching uses a stable, opaque session ID for OpenRouter routing and OpenAI cache affinity. Claude models on OpenRouter also receive the supported automatic ephemeral cache hint; other models use provider-managed caching. Cached input and cache-write token counts appear in the CLI/GUI and session usage records when the provider reports them. Benchmark JSON includes these counts too. Cache hits depend on the provider, model, prompt size, and reuse; cache writes may have a cost. See [OpenRouter's caching documentation](https://openrouter.ai/docs/guides/best-practices/prompt-caching). Cody does not cache generated answers or file contents.
 

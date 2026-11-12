@@ -142,6 +142,7 @@ type Agent struct {
 	summary             string
 	summaryEnd          int
 	compactedTokens     int
+	scale               float64 // real prompt tokens per estimated token, from the last reply
 }
 
 func New(opts Options) *Agent {
@@ -248,6 +249,8 @@ func (a *Agent) Prompt(ctx context.Context, input string, h Handler) ([]provider
 	// A reread permits one retry, but cannot keep an unchanged edit loop alive.
 	failedEdits := map[string]int{}
 	planApproved := false
+	noReasoning := false
+	refused := false // the last repeat of a failed call was refused rather than fatal
 	for turn := 0; turn < a.opts.MaxTurns; turn++ {
 		// Instructions from tool results become actionable only on the next model request.
 		for key, text := range a.pendingInstructions {
@@ -270,6 +273,8 @@ func (a *Agent) Prompt(ctx context.Context, input string, h Handler) ([]provider
 			Tools:           a.opts.Tools.Specs(),
 			CacheKey:        a.opts.CacheKey,
 			MaxOutputTokens: outputTokens,
+			ContextTokens:   a.ContextTokens(),
+			NoReasoning:     noReasoning,
 			// One notice per request unless debugging; the final error says
 			// what happened if every retry fails.
 			OnRetry: func(delay time.Duration) {
@@ -286,12 +291,19 @@ func (a *Agent) Prompt(ctx context.Context, input string, h Handler) ([]provider
 		}
 		msg, usage, err := consume(stream, h)
 		if usage != nil {
+			a.calibrate(msgs, usage.PromptTokens)
 			h(Event{Kind: KindUsage, Usage: usage})
 		}
 		if err != nil {
 			return a.addedSince(before), a.providerErr(err)
 		}
 		if msg == nil {
+			// Thinking models sometimes finish inside their reasoning and say
+			// nothing. Ask once more without it before giving up.
+			if !noReasoning {
+				noReasoning = true
+				continue
+			}
 			// Some models end the turn with an empty message after running
 			// tools. Treat that as done instead of an error.
 			if toolUsed {
@@ -308,7 +320,7 @@ func (a *Agent) Prompt(ctx context.Context, input string, h Handler) ([]provider
 				h(Event{Kind: KindNotice, Text: "model wrote a tool call as text; retrying with a tool-use reminder"})
 				continue
 			}
-			if !toolUsed && !nudged && asksUser(input, msg.Content) {
+			if _, canExplore := a.opts.Tools.Get("grep"); canExplore && !toolUsed && !nudged && asksUser(input, msg.Content) {
 				nudged, nudge = true, exploreNudge
 				h(Event{Kind: KindNotice, Text: "model asked without inspecting the workspace; retrying with an explore-first reminder"})
 				continue
@@ -321,18 +333,26 @@ func (a *Agent) Prompt(ctx context.Context, input string, h Handler) ([]provider
 		}
 		toolUsed = true
 		var loopErr error
+		skip := false
 		for _, call := range msg.ToolCalls {
 			key, target := callKeys(call)
-			if loopErr == nil && target != "" && (key == failedEdit || failedEdits[target] >= 2) {
+			if loopErr == nil && !skip && target != "" && (key == failedEdit || failedEdits[target] >= 2) {
 				loopErr = errors.New("stopped repeated edit loop; re-read the file or change the edit before retrying")
 			}
-			if loopErr == nil && key == failedCall {
-				loopErr = fmt.Errorf("stopped repeated failed %s call; change the arguments or inspect the error before retrying", call.Function.Name)
+			if loopErr == nil && !skip && key == failedCall {
+				// Small models often repeat a failed call once. Refuse it, skip the
+				// rest of its batch, and give the model one turn to recover.
+				if refused {
+					loopErr = fmt.Errorf("stopped repeated failed %s call; change the arguments or inspect the error before retrying", call.Function.Name)
+				}
+				refused, skip = true, true
 			}
 			var result string
 			if loopErr != nil {
 				// Finish journaling the batch without executing or approving more calls.
 				result = "error: not executed: " + loopErr.Error()
+			} else if skip {
+				result = "error: not executed: the same call just failed, so it and the rest of this batch were skipped. Change the arguments or use a different command."
 			} else if a.opts.RequirePlan && !planApproved && call.Function.Name != "plan" && a.mutating(call.Function.Name) {
 				// The error prefix lets the repeated-call guard stop a model that keeps
 				// retrying instead of planning.
@@ -340,6 +360,7 @@ func (a *Agent) Prompt(ctx context.Context, input string, h Handler) ([]provider
 				failedCall = key
 			} else {
 				result = a.runTool(ctx, call, h)
+				refused = false
 				if call.Function.Name == "plan" {
 					if strings.HasPrefix(result, "user denied") {
 						result = "user rejected this plan; ask what to change and do not change anything yet"
@@ -548,6 +569,18 @@ func (a *Agent) runTool(ctx context.Context, call provider.ToolCall, h Handler) 
 	}
 	h(Event{Kind: KindToolEnd, Tool: t.Name(), Result: out, Ms: time.Since(start).Milliseconds()})
 	return out
+}
+
+// calibrate corrects the chars/4 estimate with the provider's own count:
+// accessibility snapshots and code run nearer 2.4 characters per token, which
+// would otherwise overfill a small window by 70%.
+func (a *Agent) calibrate(msgs []provider.Message, real int) {
+	schemas, _ := json.Marshal(a.opts.Tools.Specs())
+	if est := estimate(msgs) + len(schemas)/3; real > 0 {
+		a.mu.Lock()
+		a.scale = min(max(float64(real)/float64(est), 1), 3)
+		a.mu.Unlock()
+	}
 }
 
 func estimate(msgs []provider.Message) int {

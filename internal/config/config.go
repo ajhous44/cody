@@ -34,10 +34,14 @@ type Config struct {
 	Providers      map[string]Provider `json:"providers"`
 	WebEnabled     bool                `json:"web_enabled,omitempty"`
 	BrowserEnabled bool                `json:"browser_enabled,omitempty"`
-	DesktopEnabled bool                `json:"desktop_enabled,omitempty"`
-	BraveSearchKey string              `json:"brave_search_key,omitempty"`
-	Debug          bool                `json:"debug,omitempty"`
-	PlanGate       bool                `json:"plan_gate,omitempty"`
+	// BrowserOnly offers the model the browser tool and nothing else.
+	BrowserOnly    bool   `json:"browser_only,omitempty"`
+	DesktopEnabled bool   `json:"desktop_enabled,omitempty"`
+	BraveSearchKey string `json:"brave_search_key,omitempty"`
+	Debug          bool   `json:"debug,omitempty"`
+	// ContextTokens is the window Ollama models are loaded with (default 8192).
+	ContextTokens int  `json:"context_tokens,omitempty"`
+	PlanGate      bool `json:"plan_gate,omitempty"`
 	// Sandbox confines shell commands: off, workspace, or strict.
 	Sandbox         string   `json:"sandbox,omitempty"`
 	SandboxWritable []string `json:"sandbox_writable,omitempty"`
@@ -102,6 +106,8 @@ func (c *Config) applyEnv() {
 	}
 	if v, err := strconv.ParseBool(os.Getenv("CODY_BROWSER")); err == nil {
 		c.BrowserEnabled = v
+	} else if os.Getenv("CODY_BROWSER") == "only" {
+		c.BrowserOnly = true
 	}
 	if v, err := strconv.ParseBool(os.Getenv("CODY_DESKTOP")); err == nil {
 		c.DesktopEnabled = v
@@ -111,6 +117,9 @@ func (c *Config) applyEnv() {
 	}
 	if v, err := strconv.ParseBool(os.Getenv("CODY_PLAN")); err == nil {
 		c.PlanGate = v
+	}
+	if v, err := strconv.Atoi(os.Getenv("CODY_CONTEXT")); err == nil && v > 0 {
+		c.ContextTokens = v
 	}
 	if v := os.Getenv("CODY_SANDBOX"); v != "" {
 		c.Sandbox = v
@@ -157,6 +166,7 @@ func (c *Config) normalize() {
 		c.Provider = "ollama"
 	}
 	c.Sandbox = strings.ToLower(strings.TrimSpace(c.Sandbox))
+	c.BrowserEnabled = c.BrowserEnabled || c.BrowserOnly
 	switch c.Approval {
 	case "ask", "auto", "yolo":
 	default:

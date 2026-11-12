@@ -1,6 +1,7 @@
 package provider
 
 import (
+	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -285,23 +286,6 @@ func OllamaRunning(ctx context.Context, baseURL string) ([]RunningModel, error) 
 	return out.Models, nil
 }
 
-// OllamaLoadedContext returns the context window of the running instance of
-// model, or 0 when the model is not loaded. The OpenAI-compatible endpoint
-// silently ignores num_ctx, so this is the window the server will actually
-// use for requests.
-func OllamaLoadedContext(ctx context.Context, baseURL, model string) int {
-	models, err := OllamaRunning(ctx, baseURL)
-	if err != nil {
-		return 0
-	}
-	for _, m := range models {
-		if matchModelName(m.Name, model) {
-			return m.ContextLength
-		}
-	}
-	return 0
-}
-
 // OllamaModelLoaded reports whether model is currently loaded in Ollama. The
 // second result is false when the server cannot be reached, so callers can
 // tell "cold" apart from "unknown" and only announce a startup they know
@@ -358,4 +342,104 @@ func HumanSize(n int64) string {
 		return fmt.Sprintf("%.1f GB", float64(n)/(1<<30))
 	}
 	return fmt.Sprintf("%.0f MB", float64(n)/(1<<20))
+}
+
+// ollamaChat builds a native /api/chat request. Ollama loads models at 4096
+// tokens unless told otherwise, and its OpenAI-compatible endpoint cannot say
+// otherwise, so local chat uses the native API.
+// ponytail: num_ctx is not checked against the model's own maximum; read it
+// from /api/show if a model with a smaller trained window ever matters.
+func ollamaChat(req Request) map[string]any {
+	msgs := make([]map[string]any, len(req.Messages))
+	for i, m := range req.Messages {
+		msgs[i] = map[string]any{"role": m.Role, "content": m.Content}
+		if m.Role == "tool" {
+			msgs[i]["tool_name"] = m.Name
+		}
+		var calls []map[string]any
+		for _, c := range m.ToolCalls {
+			args := json.RawMessage(strings.TrimSpace(c.Function.Arguments))
+			if !json.Valid(args) || args[0] != '{' { // native arguments are an object, not a string
+				args = json.RawMessage("{}")
+			}
+			calls = append(calls, map[string]any{"function": map[string]any{"name": c.Function.Name, "arguments": args}})
+		}
+		if calls != nil {
+			msgs[i]["tool_calls"] = calls
+		}
+	}
+	options := map[string]any{}
+	if req.ContextTokens > 0 {
+		options["num_ctx"] = req.ContextTokens
+	}
+	if req.MaxOutputTokens > 0 {
+		options["num_predict"] = req.MaxOutputTokens
+	}
+	body := map[string]any{"model": req.Model, "messages": msgs, "stream": true, "options": options}
+	if len(req.Tools) > 0 {
+		body["tools"] = req.Tools
+	}
+	if req.NoReasoning {
+		body["think"] = false
+	}
+	return body
+}
+
+// ollamaStream reads /api/chat's newline-delimited JSON. Tool calls arrive whole.
+type ollamaStream struct {
+	body  io.ReadCloser
+	sc    *bufio.Scanner
+	calls int
+	done  bool
+}
+
+func (s *ollamaStream) Close() error { return s.body.Close() }
+
+func (s *ollamaStream) Recv() (Delta, error) {
+	for !s.done && s.sc.Scan() {
+		if len(bytes.TrimSpace(s.sc.Bytes())) == 0 {
+			continue
+		}
+		var c struct {
+			Message struct {
+				Content, Thinking string
+				ToolCalls         []struct {
+					ID       string
+					Function struct {
+						Name      string
+						Arguments json.RawMessage
+					}
+				} `json:"tool_calls"`
+			}
+			Done       bool
+			DoneReason string `json:"done_reason"`
+			In         int    `json:"prompt_eval_count"`
+			Out        int    `json:"eval_count"`
+			Error      string
+		}
+		if err := json.Unmarshal(s.sc.Bytes(), &c); err != nil {
+			return Delta{}, fmt.Errorf("ollama: decode stream: %w", err)
+		}
+		if c.Error != "" {
+			return Delta{}, errors.New("ollama: " + c.Error)
+		}
+		d := Delta{Content: c.Message.Content, Reasoning: c.Message.Thinking}
+		for _, tc := range c.Message.ToolCalls {
+			d.ToolCalls = append(d.ToolCalls, ToolCallDelta{Index: s.calls, ID: tc.ID, Name: tc.Function.Name, Args: string(tc.Function.Arguments)})
+			s.calls++
+		}
+		if c.Done {
+			s.done = true
+			d.FinishReason = c.DoneReason
+			d.Usage = &Usage{PromptTokens: c.In, CompletionTokens: c.Out, TotalTokens: c.In + c.Out}
+		}
+		return d, nil
+	}
+	if s.done {
+		return Delta{}, io.EOF
+	}
+	if err := s.sc.Err(); err != nil {
+		return Delta{}, fmt.Errorf("ollama: read stream: %w", err)
+	}
+	return Delta{}, fmt.Errorf("ollama: stream interrupted before completion: %w", io.ErrUnexpectedEOF)
 }

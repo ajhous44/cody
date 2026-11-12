@@ -35,6 +35,10 @@ func TestWebConfigOptInAndEnvironment(t *testing.T) {
 	if cfg.Clone().BraveSearchKey != "stored-test-key" {
 		t.Fatal("clone lost stored key")
 	}
+	t.Setenv("CODY_BROWSER", "only")
+	if cfg, err = Load(); err != nil || !cfg.BrowserOnly || !cfg.BrowserEnabled {
+		t.Fatalf("CODY_BROWSER=only: %+v %v", cfg, err)
+	}
 }
 
 // Hosted embeddings upload every indexed file, so only an explicit opt-in

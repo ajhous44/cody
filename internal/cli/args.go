@@ -22,6 +22,7 @@ type options struct {
 	watchStdin   bool
 	showThinking bool
 	plan         bool
+	browserOnly  bool
 	sandbox      string
 	plain        bool // line input without the editor, picker, or live status
 	pickResume   bool // `cody resume` without an id: pick one on a terminal
@@ -82,6 +83,8 @@ func parseArgs(args []string) (options, error) {
 			o.showThinking = true
 		case a == "--plan":
 			o.plan = true
+		case a == "--browser-only":
+			o.browserOnly = true
 		case a == "--sandbox":
 			v, err := need(a)
 			if err != nil {

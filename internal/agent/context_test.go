@@ -181,3 +181,18 @@ func TestInstructionsGateEveryMutationInSameBatch(t *testing.T) {
 		}
 	}
 }
+
+// Snapshots and code run ~2.4 characters per token, not 4: the budget follows
+// the provider's real count, and never loosens below the estimate.
+func TestCalibrateFollowsRealTokenCounts(t *testing.T) {
+	a := New(Options{Tools: tool.NewRegistry()})
+	msgs := []provider.Message{{Role: "user", Content: strings.Repeat("x", 4000)}} // estimated ~1000 tokens
+	a.calibrate(msgs, 2000)
+	if a.scale < 1.9 || a.scale > 2.1 {
+		t.Fatalf("scale %.2f, want ~2", a.scale)
+	}
+	a.calibrate(msgs, 10)
+	if a.scale != 1 {
+		t.Fatalf("scale %.2f, want 1", a.scale)
+	}
+}

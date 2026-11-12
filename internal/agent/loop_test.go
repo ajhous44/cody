@@ -27,13 +27,17 @@ func TestRepeatedFailedCallsStopBeforeExecutionAndJournalBatch(t *testing.T) {
 			first := provider.ToolCallDelta{ID: "first", Name: name, Args: args}
 			repeat := provider.ToolCallDelta{ID: "repeat", Name: name, Args: reordered}
 			skipped := provider.ToolCallDelta{Index: 1, ID: "skipped", Name: "write", Args: `{"path":"must-not-exist","content":"bad"}`}
+			// The first repeat is refused with its batch and the model gets one
+			// more turn; repeating again ends the turn.
+			again := []provider.Delta{{ToolCalls: []provider.ToolCallDelta{{ID: "again", Name: name, Args: args}}}}
 			p := &fakeProvider{script: [][]provider.Delta{
 				{{ToolCalls: []provider.ToolCallDelta{first}}},
 				{{ToolCalls: []provider.ToolCallDelta{repeat, skipped}}},
+				again,
 			}}
 			if sameBatch {
 				repeat.Index, skipped.Index = 1, 2
-				p.script = [][]provider.Delta{{{ToolCalls: []provider.ToolCallDelta{first, repeat, skipped}}}}
+				p.script = [][]provider.Delta{{{ToolCalls: []provider.ToolCallDelta{first, repeat, skipped}}}, again}
 			}
 			var journal []provider.Message
 			a := New(Options{Provider: p, Model: "test", Tools: tool.NewRegistry(tool.NewRead(root), tool.NewBash(root), tool.NewWrite(root)),
@@ -46,14 +50,14 @@ func TestRepeatedFailedCallsStopBeforeExecutionAndJournalBatch(t *testing.T) {
 				}
 			}
 			_, err := a.Prompt(context.Background(), "test failure handling", h)
-			if err == nil || !strings.Contains(err.Error(), "stopped repeated failed "+name) || starts != 1 {
+			if err == nil || !strings.Contains(err.Error(), "stopped repeated failed "+name) || starts != 1 || len(p.script) != 0 {
 				t.Fatalf("%s batch=%v: starts=%d err=%v", name, sameBatch, starts, err)
 			}
 			if !reflect.DeepEqual(journal, a.History()) {
 				t.Fatal("skipped batch not persisted")
 			}
 			for _, m := range journal {
-				if m.Role == "tool" && (m.ToolCallID == "repeat" || m.ToolCallID == "skipped") && !strings.Contains(m.Content, "not executed") {
+				if m.Role == "tool" && m.ToolCallID != "first" && !strings.Contains(m.Content, "not executed") {
 					t.Fatal(m.Content)
 				}
 			}

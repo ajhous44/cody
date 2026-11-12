@@ -272,16 +272,21 @@ func TestTitleFallsBackWhenModelFails(t *testing.T) {
 	}
 }
 
-func TestContextBudgetUsesLoadedOllamaContext(t *testing.T) {
+// cody sets Ollama's window itself (Ollama's own default is 4096); hosted
+// windows come from model metadata.
+func TestContextBudget(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		fmt.Fprint(w, `{"models":[{"name":"m:latest","context_length":16384}]}`)
+		fmt.Fprint(w, `{"data":[]}`)
 	}))
 	defer srv.Close()
 
 	cfg := config.Default()
-	cfg.Providers["ollama"] = config.Provider{BaseURL: srv.URL + "/v1"}
-	if got, _ := modelLimits(context.Background(), cfg, "ollama", "m:latest"); got != 16384 {
-		t.Fatalf("budget = %d, want 16384", got)
+	if got := defaultBudget(cfg); got != 8192 {
+		t.Fatalf("local window = %d, want 8192", got)
+	}
+	cfg.ContextTokens = 16384
+	if got := defaultBudget(cfg); got != 16384 {
+		t.Fatalf("configured local window = %d, want 16384", got)
 	}
 	cfg.Providers["openrouter"] = config.Provider{BaseURL: srv.URL}
 	if got, _ := modelLimits(context.Background(), cfg, "openrouter", "m"); got != 0 {
@@ -302,12 +307,8 @@ func TestSendAnnouncesColdOllamaModel(t *testing.T) {
 			fmt.Fprint(w, `{"models":[]}`)
 		}
 	})
-	mux.HandleFunc("/", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "text/event-stream")
-		for _, chunk := range finalResponse {
-			fmt.Fprintf(w, "data: %s\n\n", chunk)
-		}
-		fmt.Fprint(w, "data: [DONE]\n\n")
+	mux.HandleFunc("/api/chat", func(w http.ResponseWriter, r *http.Request) {
+		fmt.Fprintln(w, `{"message":{"content":"done"},"done":true,"done_reason":"stop"}`)
 	})
 	srv := httptest.NewServer(mux)
 	defer srv.Close()

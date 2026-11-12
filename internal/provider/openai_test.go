@@ -248,24 +248,6 @@ func TestIsLocalHost(t *testing.T) {
 	}
 }
 
-func TestOllamaLoadedContext(t *testing.T) {
-	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path != "/api/ps" {
-			t.Errorf("path = %s", r.URL.Path)
-		}
-		fmt.Fprint(w, `{"models":[{"name":"gemma4:e4b","context_length":16384},{"name":"other:1b","context_length":4096}]}`)
-	}))
-	defer srv.Close()
-
-	ctx := context.Background()
-	if got := OllamaLoadedContext(ctx, srv.URL+"/v1", "gemma4:e4b"); got != 16384 {
-		t.Fatalf("context = %d, want 16384", got)
-	}
-	if got := OllamaLoadedContext(ctx, srv.URL+"/v1", "missing:1b"); got != 0 {
-		t.Fatalf("context = %d, want 0", got)
-	}
-}
-
 func TestOllamaModelLoaded(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		fmt.Fprint(w, `{"models":[{"name":"gemma4:e4b","context_length":16384}]}`)

@@ -52,7 +52,6 @@ type chatRequest struct {
 	CacheControl        map[string]string `json:"cache_control,omitempty"`
 	MaxTokens           int               `json:"max_tokens,omitempty"`
 	MaxCompletionTokens int               `json:"max_completion_tokens,omitempty"`
-	ReasoningEffort     string            `json:"reasoning_effort,omitempty"`
 	Model               string            `json:"model"`
 	Messages            []Message         `json:"messages"`
 	Tools               []ToolSpec        `json:"tools,omitempty"`
@@ -74,12 +73,6 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (Stream, error) {
 	} else {
 		payload.MaxTokens = req.MaxOutputTokens
 	}
-	// Thinking models can spend the whole output limit reasoning and return no text.
-	// ponytail: only Ollama is verified to accept "none" (older versions ignore it);
-	// OpenAI rejects it on some models and OpenRouter spells it differently.
-	if req.NoReasoning && o.name == "ollama" {
-		payload.ReasoningEffort = "none"
-	}
 	if req.CacheKey != "" {
 		switch o.name {
 		case "openai":
@@ -92,14 +85,19 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (Stream, error) {
 			}
 		}
 	}
+	url := o.baseURL + "/chat/completions"
 	body, err := json.Marshal(payload)
+	if o.name == "ollama" {
+		url = OllamaHost(o.baseURL) + "/api/chat"
+		body, err = json.Marshal(ollamaChat(req))
+	}
 	if err != nil {
 		return nil, err
 	}
 	streamCtx, cancel := context.WithCancelCause(ctx)
 	var resp *http.Response
 	for attempt := 0; ; attempt++ {
-		httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, o.baseURL+"/chat/completions", bytes.NewReader(body))
+		httpReq, err := http.NewRequestWithContext(streamCtx, http.MethodPost, url, bytes.NewReader(body))
 		if err != nil {
 			cancel(err)
 			return nil, err
@@ -165,6 +163,9 @@ func (o *OpenAI) Stream(ctx context.Context, req Request) (Stream, error) {
 	reader := &idleReader{ReadCloser: resp.Body, ctx: streamCtx, cancel: cancel, timeout: o.idleTimeout}
 	sc := bufio.NewScanner(reader)
 	sc.Buffer(make([]byte, 64<<10), 4<<20)
+	if o.name == "ollama" {
+		return &ollamaStream{body: reader, sc: sc}, nil
+	}
 	return &sseStream{body: reader, sc: sc, provider: o.name, model: req.Model}, nil
 }
 
