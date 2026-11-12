@@ -110,6 +110,7 @@ type pendingApproval struct {
 	tool    string
 	args    string
 	summary string
+	session string
 }
 
 type runner struct {
@@ -118,6 +119,9 @@ type runner struct {
 	busy    bool
 	cancel  context.CancelFunc
 	pending map[string]*pendingApproval
+	// allowed holds session+tool pairs the user approved for the rest of a
+	// thread. It lives in memory only and never covers a plan.
+	allowed map[string]bool
 }
 
 type Server struct {
@@ -208,7 +212,7 @@ func (s *Server) runnerFor(root string) (*runner, error) {
 			return nil, err
 		}
 	}
-	r := &runner{root: root, eng: eng, pending: map[string]*pendingApproval{}}
+	r := &runner{root: root, eng: eng, pending: map[string]*pendingApproval{}, allowed: map[string]bool{}}
 	eng.SetApprover(agent.ApproverFunc(func(ctx context.Context, t tool.Tool, args string) (bool, error) {
 		return s.requestApproval(ctx, r, t, args)
 	}))
@@ -287,11 +291,15 @@ func (s *Server) Close() error {
 func (s *Server) requestApproval(ctx context.Context, r *runner, t tool.Tool, args string) (bool, error) {
 	id := randHex(8)
 	ch := make(chan bool, 1)
-	summary := t.Summarize(json.RawMessage(args))
+	summary := clip.Tilde(t.Summarize(json.RawMessage(args)))
 	session := r.eng.SessionID()
 
 	s.mu.Lock()
-	r.pending[id] = &pendingApproval{ch: ch, tool: t.Name(), args: args, summary: summary}
+	if r.allowed[session+"\x00"+t.Name()] {
+		s.mu.Unlock()
+		return true, nil
+	}
+	r.pending[id] = &pendingApproval{ch: ch, tool: t.Name(), args: args, summary: summary, session: session}
 	s.mu.Unlock()
 	defer func() {
 		s.mu.Lock()
@@ -317,6 +325,7 @@ type wireEvent struct {
 	Result  string          `json:"result,omitempty"`
 	Ms      int64           `json:"ms,omitempty"`
 	Usage   *provider.Usage `json:"usage,omitempty"`
+	Context int             `json:"context,omitempty"` // context window, sent with usage
 	ID      string          `json:"id,omitempty"`
 	Error   string          `json:"error,omitempty"`
 
@@ -360,9 +369,28 @@ type historyMessage struct {
 }
 
 type historyTool struct {
-	ID   string `json:"id"`
-	Name string `json:"name"`
-	Args string `json:"args"`
+	ID      string `json:"id"`
+	Name    string `json:"name"`
+	Args    string `json:"args"`
+	Summary string `json:"summary,omitempty"`
+}
+
+// toolSummary labels a saved tool call the way the live view does: its path,
+// command, or pattern, not raw JSON.
+func toolSummary(args string) string {
+	var fields map[string]any
+	if json.Unmarshal([]byte(args), &fields) != nil {
+		return args
+	}
+	for _, key := range []string{"command", "path", "filePath", "pattern", "query", "url", "name"} {
+		if v, ok := fields[key].(string); ok && v != "" {
+			return clip.Tilde(v)
+		}
+	}
+	if list, ok := fields["args"].([]any); ok && len(list) > 0 {
+		return clip.Tilde(strings.TrimSpace(fmt.Sprintln(list...)))
+	}
+	return args
 }
 
 func (s *Server) Handler() http.Handler {
@@ -586,8 +614,12 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 		defer cancel()
 		err := rr.eng.Send(ctx, text, func(e agent.Event) {
 			ev := wireEventFromAgent(e)
+			ev.Summary = clip.Tilde(ev.Summary)
 			ev.Root = root
 			ev.Session = sessionID
+			if limit, ok := rr.eng.(interface{ ContextLimit() int }); ok && e.Kind == agent.KindUsage {
+				ev.Context = limit.ContextLimit()
+			}
 			s.broadcast(ev)
 		})
 		ev := wireEvent{Root: root, Session: sessionID}
@@ -628,8 +660,9 @@ func (s *Server) handlePrompt(w http.ResponseWriter, r *http.Request) {
 
 func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	var body struct {
-		ID    string `json:"id"`
-		Allow bool   `json:"allow"`
+		ID     string `json:"id"`
+		Allow  bool   `json:"allow"`
+		Always bool   `json:"always"` // also approve this tool for the rest of the thread
 	}
 	if !s.decode(w, r, &body) {
 		return
@@ -639,6 +672,9 @@ func (s *Server) handleApprove(w http.ResponseWriter, r *http.Request) {
 	for _, rr := range s.runners {
 		if p, ok := rr.pending[body.ID]; ok {
 			ch = p.ch
+			if body.Allow && body.Always && p.tool != "plan" {
+				rr.allowed[p.session+"\x00"+p.tool] = true
+			}
 			break
 		}
 	}
@@ -835,7 +871,7 @@ func (s *Server) stateEventWith(full bool) wireEvent {
 		Approval:  r.eng.Approval(),
 		Session:   r.eng.SessionID(),
 		Title:     session.Title(r.eng.Root(), r.eng.SessionID()),
-		Workspace: r.eng.Root(),
+		Workspace: clip.Tilde(r.eng.Root()),
 		Spaces:    spaces,
 		Active:    active,
 		Root:      active,
@@ -868,7 +904,7 @@ func historyOf(msgs []provider.Message) []historyMessage {
 	for i, m := range msgs {
 		h := historyMessage{Role: m.Role, Text: truncate(m.Content, maxHistoryText), ToolCallID: m.ToolCallID, Turn: turns[i]}
 		for _, c := range m.ToolCalls {
-			h.Tools = append(h.Tools, historyTool{ID: c.ID, Name: c.Function.Name, Args: c.Function.Arguments})
+			h.Tools = append(h.Tools, historyTool{ID: c.ID, Name: c.Function.Name, Args: c.Function.Arguments, Summary: toolSummary(c.Function.Arguments)})
 		}
 		out = append(out, h)
 	}

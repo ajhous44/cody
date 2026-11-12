@@ -417,6 +417,29 @@ func TestApprovalRoundTrip(t *testing.T) {
 	if missing.StatusCode != http.StatusNotFound {
 		t.Fatalf("unknown id status = %d", missing.StatusCode)
 	}
+
+	// "Always" approves this tool for the rest of the thread: the next request
+	// is answered without asking.
+	go func() {
+		allow, err := stub.approver.Approve(ctx, stubTool{}, `{"command":"echo again"}`)
+		resultCh <- result{allow, err}
+	}()
+	for approvalID = ""; approvalID == ""; {
+		ev := next()
+		if ev == nil {
+			t.Fatal("stream ended before the second approval event")
+		}
+		if ev["type"] == "approval" {
+			approvalID, _ = ev["id"].(string)
+		}
+	}
+	post(t, ts.URL+"/api/approve", "test-token", map[string]any{"id": approvalID, "allow": true, "always": true}).Body.Close()
+	if r := <-resultCh; r.err != nil || !r.allow {
+		t.Fatalf("always approve result = %+v", r)
+	}
+	if allow, err := stub.approver.Approve(ctx, stubTool{}, `{"command":"echo third"}`); err != nil || !allow {
+		t.Fatalf("thread-wide approval not remembered: %v %v", allow, err)
+	}
 }
 
 func TestInterrupt(t *testing.T) {
@@ -1210,5 +1233,21 @@ func TestSessionForkEndpointAndTurnNumbers(t *testing.T) {
 	hist := historyOf(msgs)
 	if len(hist) != maxHistoryMessages || hist[0].Turn != 11 || hist[len(hist)-2].Turn != 50 || hist[1].Turn != 0 {
 		t.Fatalf("turns: first %d, last user %d", hist[0].Turn, hist[len(hist)-2].Turn)
+	}
+}
+
+// A reloaded thread labels tool calls like the live view: the command or
+// path, with the home folder shortened, never raw JSON.
+func TestSavedToolCallsGetReadableLabels(t *testing.T) {
+	t.Setenv("HOME", "/Users/ada")
+	for args, want := range map[string]string{
+		`{"command":"cd /Users/ada/code/shop && go test ./..."}`:    "cd ~/code/shop && go test ./...",
+		`{"path":"cart/cart.go","old_string":"a","new_string":"b"}`: "cart/cart.go",
+		`{"args":["click","@e3"]}`:                                  "click @e3",
+		`not json`:                                                  "not json",
+	} {
+		if got := toolSummary(args); got != want {
+			t.Errorf("toolSummary(%s) = %q, want %q", args, got, want)
+		}
 	}
 }

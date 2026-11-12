@@ -17,3 +17,17 @@ func TestBytesKeepsRunesWhole(t *testing.T) {
 		t.Fatal("ascii clip")
 	}
 }
+
+func TestTildeShortensHomePathsForDisplay(t *testing.T) {
+	t.Setenv("HOME", "/Users/ada")
+	for in, want := range map[string]string{
+		"/Users/ada/code/shop":            "~/code/shop",
+		"cd /Users/ada/code/shop && make": "cd ~/code/shop && make",
+		"/Users/ada":                      "~",
+		"/Users/adam/code":                "/Users/adam/code",
+	} {
+		if got := Tilde(in); got != want {
+			t.Errorf("Tilde(%q) = %q, want %q", in, got, want)
+		}
+	}
+}

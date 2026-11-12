@@ -171,3 +171,25 @@ func TestSandboxSettingValidatedAndSaved(t *testing.T) {
 		t.Fatalf("sandbox not applied and saved: %v / %+v", live["sandbox"], saved)
 	}
 }
+
+// Browser-only mode and the local context window are settable from the GUI.
+// Browser-only implies the browser, and turning the browser off turns it off.
+func TestBrowserOnlyAndContextSettings(t *testing.T) {
+	ts, _ := newTestServer(t, &stubEngine{root: t.TempDir()})
+	set := func(change map[string]any) map[string]any {
+		t.Helper()
+		post(t, ts.URL+"/api/settings", "test-token", change).Body.Close()
+		var settings map[string]any
+		getJSON(t, ts.URL+"/api/settings", "test-token", &settings)
+		return settings
+	}
+	if s := set(map[string]any{"browserOnly": true, "contextTokens": 16384}); s["browserOnly"] != true || s["browserEnabled"] != true || s["contextTokens"] != float64(16384) {
+		t.Fatalf("after enabling browser-only: %+v", s)
+	}
+	if cfg, err := config.Load(); err != nil || !cfg.BrowserOnly || cfg.ContextTokens != 16384 {
+		t.Fatalf("not persisted: %+v %v", cfg, err)
+	}
+	if s := set(map[string]any{"browserEnabled": false}); s["browserOnly"] != false || s["browserEnabled"] != false {
+		t.Fatalf("browser off must clear browser-only: %+v", s)
+	}
+}

@@ -159,6 +159,7 @@
   .hint code { color: var(--text); font-size: 11px; }
   .row { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
   .row input { flex: 1 1 160px; }
+  .row #set-context { flex: 0 0 140px; }
   #local-models { overflow-x: auto; }
   .mlist { width: 100%; border-collapse: collapse; font-size: 12px; }
   .mlist th { text-align: left; color: var(--dim); font-weight: 400; padding: 8px; border-bottom: 1px solid var(--line); }
@@ -252,7 +253,7 @@
   details.reasoning pre { white-space: pre-wrap; word-break: break-word; margin: 8px 0 0; font-size: 12px; }
   .viewer { border-bottom: 0; border-top: 1px solid var(--line); }
   #viewer-title { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-  .viewer pre { margin: 0; padding: 12px 14px; font-size: 12px; line-height: 1.6; overflow: auto; max-height: 50vh; white-space: pre; }
+  .viewer pre { margin: 0; padding: 12px 14px; font-size: 12px; line-height: 1.6; overflow: auto; max-height: 50vh; white-space: pre-wrap; overflow-wrap: anywhere; tab-size: 4; }
   .viewer .add { color: var(--green); display: block; }
   .viewer .del { color: var(--red); display: block; }
   .viewer .hunk { color: var(--accent); display: block; }
@@ -319,10 +320,10 @@
     <button class="light min" data-action="minimize" title="Minimize"></button>
     <button class="light zoom" data-action="zoom" title="Zoom"></button>
   </div>
-  <button class="icon" id="toggle-left-mini" title="Show projects" hidden>›</button>
+  <button class="icon" id="toggle-left-mini" title="Show projects" aria-label="Show projects" hidden>›</button>
   <div class="grow"></div>
   <div id="status" role="status"><span class="dot" id="dot"></span><span class="face" id="face"></span><span id="statustext">connecting…</span></div>
-  <button class="icon" id="toggle-right-mini" title="Show files" hidden>‹</button>
+  <button class="icon" id="toggle-right-mini" title="Show files" aria-label="Show files" hidden>‹</button>
 </header>
 
 <div class="body">
@@ -340,10 +341,10 @@
         </svg>
         <span>cody</span>
       </div>
-      <button class="icon" id="toggle-left" title="Collapse projects">‹</button>
+      <button class="icon" id="toggle-left" title="Collapse projects" aria-label="Collapse projects">‹</button>
     </div>
     <section class="pane tree-pane">
-      <div class="pane-head"><span>projects</span><button class="mini" id="add-space" title="Add project folder">+</button></div>
+      <div class="pane-head"><span>projects</span><button class="mini" id="add-space" title="Add project folder" aria-label="Add project folder">+</button></div>
       <div class="list" id="space-tree"></div>
     </section>
     <div class="sidebar-foot">
@@ -410,7 +411,7 @@
     <div id="settings-view" hidden>
       <div class="settings">
         <div class="settings-head">
-          <button class="icon" id="close-settings" title="Back to chat">‹</button>
+          <button class="icon" id="close-settings" title="Back to chat" aria-label="Back to chat">‹</button>
           <span>settings</span>
           <span class="hint">stored locally in <code id="set-path">~/.cody/config.json</code></span>
         </div>
@@ -428,6 +429,10 @@
           <h3>model</h3>
           <select id="set-model" aria-label="Model"></select>
           <p class="hint" id="set-model-hint"></p>
+          <div class="row">
+            <input id="set-context" aria-label="Context window for local models, in tokens" type="number" min="0" step="1024" placeholder="8192">
+          </div>
+          <p class="hint">Context window for local (Ollama) models, in tokens. Empty uses 8192. A larger window costs memory; a smaller one summarizes sooner.</p>
         </section>
 
         <section class="settings-section">
@@ -461,6 +466,8 @@
           <p class="hint" id="set-web-hint" role="status"></p>
           <label class="check"><input type="checkbox" id="set-browser-enabled">Browser control</label>
           <p class="hint">Runs agent-browser (npm i -g agent-browser) in its own headless session. Asks before each command unless yolo.</p>
+          <label class="check"><input type="checkbox" id="set-browser-only">Browser only</label>
+          <p class="hint">Gives the model the browser and no shell or file tools: a much smaller prompt, and nothing on disk it can change. Best for browser tasks on small local models.</p>
           <label class="check"><input type="checkbox" id="set-desktop-enabled">Desktop control</label>
           <p class="hint">Runs agent-desktop (npm i -g agent-desktop) on your apps; needs Accessibility permission on macOS. Asks before each command unless yolo.</p>
           <p class="hint">Toggling any stops active turns.</p>
@@ -501,10 +508,10 @@
 
   <aside class="sidebar right" id="right">
     <div class="tabs">
-      <button class="icon" id="toggle-right" title="Collapse files">›</button>
+      <button class="icon" id="toggle-right" title="Collapse files" aria-label="Collapse files">›</button>
       <button class="tab active" data-tab="changes">changes</button>
       <button class="tab" data-tab="files">files</button>
-      <button class="mini" id="refresh-pane" title="Refresh">↻</button>
+      <button class="mini" id="refresh-pane" title="Refresh" aria-label="Refresh">↻</button>
     </div>
     <div class="tab-body" id="tab-changes">
       <div id="git-branch" class="empty"></div>
@@ -514,7 +521,7 @@
       <div class="list" id="file-list"></div>
     </div>
     <section class="pane viewer" id="viewer" hidden>
-      <div class="pane-head"><span id="viewer-title">file</span><button class="mini" id="viewer-close" title="Close">×</button></div>
+      <div class="pane-head"><span id="viewer-title">file</span><button class="mini" id="viewer-close" title="Close" aria-label="Close">×</button></div>
       <pre id="viewer-body"></pre>
     </section>
   </aside>
@@ -795,18 +802,23 @@
     allow.className = "allow"; allow.textContent = "Approve";
     const deny = document.createElement("button");
     deny.className = "deny"; deny.textContent = "Deny";
-    actions.append(allow, deny);
+    // One click for the rest of the thread; a plan is always asked.
+    const always = document.createElement("button");
+    always.className = "deny"; always.textContent = "Always";
+    always.title = "Approve every " + ev.tool + " request in this thread";
+    always.hidden = ev.tool === "plan";
+    actions.append(allow, always, deny);
     const error = document.createElement("div"); error.className = "approval-error";
     error.setAttribute("role", "alert"); error.hidden = true;
     row.append(toggle, actions);
     card.append(row, detail, error);
     $("approval-dock").appendChild(card);
-    const decide = async (ok) => {
+    const decide = async (ok, forThread) => {
       const hadFocus = card.contains(document.activeElement);
-      allow.disabled = deny.disabled = true;
+      allow.disabled = always.disabled = deny.disabled = true;
       error.hidden = true;
       try {
-        await api("/api/approve", { id, allow: ok });
+        await api("/api/approve", { id, allow: ok, always: !!forThread });
         delete pendingById[id];
         shownApprovals.delete(id);
         card.remove();
@@ -815,9 +827,10 @@
       } catch (e) {
         error.textContent = "Could not send your decision. " + e.message;
         error.hidden = false;
-        allow.disabled = deny.disabled = false;
+        allow.disabled = always.disabled = deny.disabled = false;
       }
     };
+    always.addEventListener("click", () => decide(true, true));
     allow.addEventListener("click", () => decide(true));
     deny.addEventListener("click", () => decide(false));
   }
@@ -881,7 +894,7 @@
       return "\u0000" + (spans.length - 1) + "\u0000";
     });
     s = s.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    s = s.replace(/(^|[^*])\*([^*\n]+)\*/g, "$1<em>$2</em>");
+    s = s.replace(/(^|[^*\w])\*([^*\s][^*\n]*?)\*(?![*\w])/g, "$1<em>$2</em>");
     s = s.replace(/\[([^\]]+)\]\((https?:\/\/[^)\s]+)\)/g, '<a href="$2" target="_blank" rel="noopener">$1</a>');
     return s.replace(/\u0000(\d+)\u0000/g, (_, i) => spans[+i]);
   }
@@ -1002,7 +1015,7 @@
         head.setAttribute("aria-expanded", "false");
         head.innerHTML = '<span class="tool-name"></span><span class="tool-summary"></span><span class="tool-ms">done</span>';
         head.querySelector(".tool-name").textContent = t.name;
-        head.querySelector(".tool-summary").textContent = t.args || "";
+        head.querySelector(".tool-summary").textContent = t.summary || t.args || "";
         const body = document.createElement("pre");
         body.className = "tool-body";
         card.append(head, body);
@@ -1714,6 +1727,8 @@
     $("set-approval").value = s.approval || "ask";
     $("set-web-enabled").checked = !!s.webEnabled;
     $("set-browser-enabled").checked = !!s.browserEnabled;
+    $("set-browser-only").checked = !!s.browserOnly;
+    if (document.activeElement !== $("set-context")) $("set-context").value = s.contextTokens || "";
     $("set-desktop-enabled").checked = !!s.desktopEnabled;
     $("set-debug").checked = !!s.debug;
     $("set-plan").checked = !!s.planGate;
@@ -1945,6 +1960,7 @@
         usage = ev.usage;
         if (usage) {
           let text = "tokens " + usage.prompt_tokens + " in / " + usage.completion_tokens + " out";
+          if (ev.context) text = "context " + Math.round(100 * usage.prompt_tokens / ev.context) + "% of " + (ev.context / 1000).toFixed(1) + "k · " + text;
           const cache = usage.prompt_tokens_details;
           if (cache) text += " · cache " + (cache.cached_tokens || 0) + " read / " + (cache.cache_write_tokens || 0) + " written";
           $("tokens").textContent = text;
@@ -2194,6 +2210,7 @@
   }
   document.addEventListener("keydown", (e) => {
     if (e.key === "Escape" && settingsOpen() && $("modal").hidden) closeSettings();
+    else if (e.key === "Escape" && busy && $("modal").hidden) stop();
   });
   $("set-provider").addEventListener("change", async () => {
     try {
@@ -2250,6 +2267,8 @@
   }
   $("set-web-enabled").addEventListener("change", e => saveWebSettings({ webEnabled: e.target.checked }));
   $("set-browser-enabled").addEventListener("change", e => saveWebSettings({ browserEnabled: e.target.checked }));
+  $("set-browser-only").addEventListener("change", e => saveWebSettings({ browserOnly: e.target.checked }));
+  $("set-context").addEventListener("change", e => saveWebSettings({ contextTokens: parseInt(e.target.value, 10) || 0 }));
   $("set-desktop-enabled").addEventListener("change", e => saveWebSettings({ desktopEnabled: e.target.checked }));
   $("set-debug").addEventListener("change", e => saveWebSettings({ debug: e.target.checked }));
   $("set-plan").addEventListener("change", e => saveWebSettings({ planGate: e.target.checked }));

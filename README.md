@@ -4,9 +4,35 @@ A small coding agent for the terminal. One Go binary, no runtime dependencies, s
 
 **Status:** v3.0.0. Interactive CLI, one-shot runs, sessions, a local-model benchmark suite, a multi-project web GUI (`cody serve`), and a macOS app.
 
+**Use at your own risk.** cody runs commands, changes files, and can operate a browser and desktop apps on your computer. You are responsible for what it does; the authors are not. See the [Disclaimer](#disclaimer).
+
 The CLI and browser GUI are built for macOS, Windows, and Linux. The native app is macOS-only. The `bash` tool uses Bash on macOS/Linux and PowerShell on Windows; Git is needed for change previews.
 
 Runtime regression tests have passed on macOS (Apple Silicon) and Linux (ARM64 and emulated x64). Windows and Intel macOS builds are cross-compiled; native runtime validation is pending.
+
+## Screenshots
+
+The web GUI (`cody serve`) fixing a failing test with a small local model, `qwen3.5:4b`:
+
+![The cody web GUI after fixing a failing test: the request, each tool call, the answer, and the changed file](assets/gui-conversation.png)
+
+Changes wait for your approval. **Always** approves that tool for the rest of the thread.
+
+![An edit waiting for approval in the web GUI, with Approve, Always and Deny](assets/gui-approval.png)
+
+| Changes and diffs | Settings |
+| --- | --- |
+| ![The diff of the changed file in the side panel](assets/gui-diff.png) | ![The settings view](assets/gui-settings.png) |
+
+The same task in the terminal:
+
+![A cody terminal session: approvals, tool output, the answer, and the turn's time and token counts](assets/terminal-session.png)
+
+`cody bench` on the same model:
+
+![cody bench results: five tasks passed, with time and token counts](assets/terminal-bench.png)
+
+These show cody 3.0.0 on a demo project. The terminal images are rendered from captured terminal output.
 
 ## Principles
 
@@ -161,12 +187,13 @@ The gear at the bottom of the projects sidebar opens a settings view in the midd
 
 - provider, model, and approval
 - the OpenRouter API key
-- independent web research and browser control toggles, plus an optional Brave Search API key, and
+- the context window local models are loaded with
+- independent web research and browser control toggles, browser-only mode, plus an optional Brave Search API key, and
 - a table of every installed local model — parameters, quantization, size, context window, and whether it is currently loaded in memory (with VRAM)
 
 Settings live in `~/.cody/config.json`. Saved keys are plaintext, protected by owner-only file permissions on Unix and your profile directory's ACL on Windows; Cody does not use an OS credential vault. Configured keys are omitted from settings responses and session metadata, and there is no telemetry. Prompts and tool output are saved in sessions and may contain secrets you supply. Hosted providers receive prompts and tool results; free pricing and zero data retention depend on the selected provider/endpoint and account policies.
 
-Drag the dividers to resize either sidebar (170–560px, remembered per browser). Below 820px wide the sidebars become overlay drawers so the chat keeps the space.
+The line under the composer shows the project folder and, after each reply, how full the context window is. Drag the dividers to resize either sidebar (170–560px, remembered per browser). Below 820px wide the sidebars become overlay drawers so the chat keeps the space.
 
 Security defaults: binds to loopback only, requires a per-run token on every API call, rejects foreign `Host` headers (DNS rebinding), and never trusts the browser with file access beyond the same workspace-bound tools. Binding to a non-loopback address prints a warning; anyone with the token URL can then use cody.
 
@@ -258,7 +285,7 @@ In a terminal, the prompt is a small line editor that stays inline: no full-scre
 | `auto` | automatic | confirm |
 | `yolo` | automatic | automatic |
 
-Set with `--approval`, `--yolo`, or `CODY_APPROVAL`. At a prompt, `a` approves everything for the rest of the session. File tools and previews reject paths and symlinks that escape the workspace, and `write`/`edit` refuse to modify `.git` metadata (hooks and config can run commands). Shell commands run with your user permissions and, unless you turn on the shell sandbox below, are not confined; approve them accordingly. Cancelling a shell tool terminates its process tree, and background children are cleaned up when the tool exits.
+Set with `--approval`, `--yolo`, or `CODY_APPROVAL`. At a terminal prompt, `a` approves everything for the rest of the session. In the web GUI, **Always** approves that one tool for the rest of the thread (a plan is always asked), and Esc stops a running turn. File tools and previews reject paths and symlinks that escape the workspace, and `write`/`edit` refuse to modify `.git` metadata (hooks and config can run commands). Shell commands run with your user permissions and, unless you turn on the shell sandbox below, are not confined; approve them accordingly. Cancelling a shell tool terminates its process tree, and background children are cleaned up when the tool exits.
 
 ### Shell sandbox
 
@@ -496,6 +523,16 @@ cody is MIT-licensed and contributions are welcome via GitHub pull requests. Kee
 ## Reference documents
 
 The original research notes and product drafts that informed cody are kept locally under `docs/` and are deliberately excluded from this repository. They describe a broader product under a different working name; they are not a committed feature list.
+
+## Disclaimer
+
+cody is an AI agent. It can read and change files, run shell commands, send requests to the web, and operate a web browser and desktop apps on your computer. Models make mistakes, and files and web pages can contain text that misleads them.
+
+You alone are responsible for what cody does when you run it. That includes every action you approve, and every action it takes without asking when you turn approvals down or off (`auto`, `--yolo`). Review what it proposes, keep your work in version control or backed up, and take particular care with browser use, desktop use, and anything that involves accounts, money, or other people's data.
+
+cody is provided "as is", without warranty of any kind, express or implied, as set out in the [MIT License](LICENSE). To the fullest extent the law allows, the authors and contributors accept no responsibility or liability for any loss, damage, cost, or other consequence of installing or using it. That includes lost, changed, or exposed data; actions taken on websites, in apps, or on your system; charges from model providers or other services; and any breach of a website's or service's terms.
+
+If you do not accept this, do not use cody.
 
 ## License
 

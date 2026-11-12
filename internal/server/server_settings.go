@@ -8,6 +8,7 @@ import (
 	"strings"
 	"time"
 
+	"github.com/ajhous44/cody/v3/internal/clip"
 	"github.com/ajhous44/cody/v3/internal/config"
 	"github.com/ajhous44/cody/v3/internal/provider"
 )
@@ -147,7 +148,7 @@ func probeModels(ctx context.Context, cfg *config.Config) (map[string]any, map[s
 
 func (s *Server) settingsPayload() map[string]any {
 	out := map[string]any{
-		"configPath":       config.Path(),
+		"configPath":       clip.Tilde(config.Path()),
 		"provider":         "",
 		"model":            "",
 		"approval":         "ask",
@@ -167,6 +168,8 @@ func (s *Server) settingsPayload() map[string]any {
 	out["openrouterKeyEnv"] = os.Getenv("OPENROUTER_API_KEY") != "" || os.Getenv("CODY_API_KEY") != ""
 	out["webEnabled"] = cfg.WebEnabled
 	out["browserEnabled"] = cfg.BrowserEnabled
+	out["browserOnly"] = cfg.BrowserOnly
+	out["contextTokens"] = cfg.ContextTokens
 	out["desktopEnabled"] = cfg.DesktopEnabled
 	out["debug"] = cfg.Debug
 	out["planGate"] = cfg.PlanGate
@@ -192,6 +195,8 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		OpenRouterKey  *string `json:"openrouterKey"`
 		WebEnabled     *bool   `json:"webEnabled"`
 		BrowserEnabled *bool   `json:"browserEnabled"`
+		BrowserOnly    *bool   `json:"browserOnly"`
+		ContextTokens  *int    `json:"contextTokens"`
 		DesktopEnabled *bool   `json:"desktopEnabled"`
 		BraveSearchKey *string `json:"braveSearchKey"`
 		Debug          *bool   `json:"debug"`
@@ -272,6 +277,14 @@ func (s *Server) handleSettings(w http.ResponseWriter, r *http.Request) {
 		}
 		if body.BrowserEnabled != nil {
 			c.BrowserEnabled = *body.BrowserEnabled
+			c.BrowserOnly = c.BrowserOnly && c.BrowserEnabled
+		}
+		if body.BrowserOnly != nil {
+			c.BrowserOnly = *body.BrowserOnly
+			c.BrowserEnabled = c.BrowserEnabled || c.BrowserOnly
+		}
+		if body.ContextTokens != nil {
+			c.ContextTokens = max(*body.ContextTokens, 0)
 		}
 		if body.DesktopEnabled != nil {
 			c.DesktopEnabled = *body.DesktopEnabled

@@ -12,6 +12,7 @@ import (
 	"unicode/utf8"
 
 	"github.com/ajhous44/cody/v3/internal/agent"
+	"github.com/ajhous44/cody/v3/internal/clip"
 	"github.com/ajhous44/cody/v3/internal/term"
 	"github.com/ajhous44/cody/v3/internal/tool"
 )
@@ -205,7 +206,7 @@ func (u *UI) Errorf(format string, args ...any) { fmt.Fprintf(u.errOut, format, 
 
 // Banner is one dim line: the transcript starts on the next screen row.
 func (u *UI) Banner(version, providerName, model, root, sessionID string) {
-	u.Printf("%s\n\n", u.Dim(fmt.Sprintf("cody %s  %s/%s  %s  session %s  /help", version, providerName, model, root, sessionID)))
+	u.Printf("%s\n\n", u.Dim(fmt.Sprintf("cody %s  %s/%s  %s  session %s  /help", version, providerName, model, clip.Tilde(root), sessionID)))
 }
 
 func (u *UI) SetThinkingVisible(on bool) { u.showThinking = on }
@@ -474,6 +475,7 @@ func (u *UI) breakLine() {
 // commands, edits as a one-line old-to-new diff, and anything unsummarized as
 // plain text.
 func (u *UI) describe(tool, args, summary string) string {
+	summary = clip.Tilde(summary)
 	switch tool {
 	case "plan":
 		return "\n" + indent(summary, "    ")
